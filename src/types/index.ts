@@ -69,6 +69,11 @@ export interface SaleOrder {
   payMethod: "cash" | "wechat" | "alipay" | "member";
   memberId?: string;
   status: "paid" | "returned" | "exchanged";
+  returnReason?: string;
+  exchangeReason?: string;
+  refundAmount?: number;
+  processNote?: string;
+  processedAt?: string;
   operator: string;
   createdAt: string;
 }

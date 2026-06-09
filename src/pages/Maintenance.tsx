@@ -50,8 +50,8 @@ export default function Maintenance() {
     return maintenanceOrders.filter((o) => {
       const matchSearch =
         !searchText ||
-        o.orderNo.includes(searchText) ||
-        o.productName.includes(searchText) ||
+        o.orderNo?.includes(searchText) ||
+        (o.productName && o.productName.includes(searchText)) ||
         (o.customerName && o.customerName.includes(searchText));
       const matchType = typeFilter === "all" || o.type === typeFilter;
       return matchSearch && matchType;
@@ -215,7 +215,7 @@ export default function Maintenance() {
                           {typeCfg.label}
                         </span>
                       </div>
-                      <div className="font-medium text-text-900 text-sm mb-1 line-clamp-1">{order.productName}</div>
+                      <div className="font-medium text-text-900 text-sm mb-1 line-clamp-1">{order.productName || "（未填写商品名）"}</div>
                       <p className="text-xs text-text-500 line-clamp-2 mb-3 min-h-[32px]">{order.description}</p>
 
                       {order.customerName && (
@@ -380,7 +380,7 @@ export default function Maintenance() {
               <div className="grid grid-cols-2 gap-5">
                 <div>
                   <div className="text-xs text-text-500 mb-1">商品名称</div>
-                  <div className="font-medium text-text-900">{showDetailModal.productName}</div>
+                  <div className="font-medium text-text-900">{showDetailModal.productName || "（未填写商品名）"}</div>
                 </div>
                 <div>
                   <div className="text-xs text-text-500 mb-1">期望完成</div>

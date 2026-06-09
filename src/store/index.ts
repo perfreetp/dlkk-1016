@@ -47,6 +47,7 @@ interface AppState {
 
   addProduct: (p: Product) => void;
   updateProduct: (id: string, p: Partial<Product>) => void;
+  deleteProduct: (id: string) => void;
   addCategory: (c: Category) => void;
   updateCategory: (id: string, c: Partial<Category>) => void;
   deleteCategory: (id: string) => void;
@@ -61,6 +62,7 @@ interface AppState {
 
   addStockRecord: (s: StockRecord) => void;
   addTransfer: (t: TransferOrder) => void;
+  updateTransfer: (id: string, t: Partial<TransferOrder>) => void;
   addStocktake: (s: StocktakeOrder) => void;
 
   addMaintenance: (m: MaintenanceOrder) => void;
@@ -98,6 +100,8 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({
       products: s.products.map((x) => (x.id === id ? { ...x, ...p } : x)),
     })),
+  deleteProduct: (id) =>
+    set((s) => ({ products: s.products.filter((x) => x.id !== id) })),
   addCategory: (c) => set((s) => ({ categories: [...s.categories, c] })),
   updateCategory: (id, c) =>
     set((s) => ({
@@ -128,6 +132,10 @@ export const useAppStore = create<AppState>((set) => ({
   addStockRecord: (r) =>
     set((s) => ({ stockRecords: [r, ...s.stockRecords] })),
   addTransfer: (t) => set((s) => ({ transferOrders: [t, ...s.transferOrders] })),
+  updateTransfer: (id, t) =>
+    set((s) => ({
+      transferOrders: s.transferOrders.map((x) => (x.id === id ? { ...x, ...t } : x)),
+    })),
   addStocktake: (sk) =>
     set((s) => ({ stocktakeOrders: [sk, ...s.stocktakeOrders] })),
 

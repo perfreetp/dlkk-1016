@@ -15,6 +15,10 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
+  X,
+  Package,
+  FileCheck,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -35,52 +39,216 @@ const typeConfig: Record<string, { label: string; icon: any; cls: string }> = {
 
 export default function Inventory() {
   const [activeTab, setActiveTab] = useState("inbound");
-  const products = useAppStore((s) => s.products);
-  const stockRecords = useAppStore((s) => s.stockRecords);
-  const transferOrders = useAppStore((s) => s.transferOrders);
-  const stocktakeOrders = useAppStore((s) => s.stocktakeOrders);
-  const addStockRecord = useAppStore((s) => s.addStockRecord);
-  const updateProduct = useAppStore((s) => s.updateProduct);
+  const {
+    products,
+    stockRecords,
+    transferOrders,
+    stocktakeOrders,
+    addStockRecord,
+    updateProduct,
+    updateTransfer,
+    addStocktake,
+    suppliers,
+  } = useAppStore();
 
   const lowStockProducts = products.filter((p) => p.stock < p.safetyStock);
+
+  // 入库
   const [showInbound, setShowInbound] = useState(false);
   const [inboundData, setInboundData] = useState({ productId: "", qty: 10, supplier: "", remark: "" });
+
+  // 报损
+  const [showDamage, setShowDamage] = useState(false);
+  const [damageData, setDamageData] = useState({ productId: "", qty: 1, reason: "", remark: "" });
+
+  // 盘点
+  const [showStocktake, setShowStocktake] = useState(false);
+  const [stocktakeName, setStocktakeName] = useState("");
+  const [stocktakeItems, setStocktakeItems] = useState<
+    { productId: string; productName: string; systemStock: number; actualStock: number }[]
+  >([]);
 
   const submitInbound = () => {
     if (!inboundData.productId) return;
     const product = products.find((p) => p.id === inboundData.productId);
     if (!product) return;
-    const record = {
+    const qty = Math.max(1, inboundData.qty);
+    addStockRecord({
       id: `stk${Date.now()}`,
-      type: "inbound" as const,
+      type: "inbound",
       productId: product.id,
       productName: product.name,
-      quantity: inboundData.qty,
+      quantity: qty,
       beforeStock: product.stock,
-      afterStock: product.stock + inboundData.qty,
+      afterStock: product.stock + qty,
       relatedOrderNo: `IN${Date.now().toString().slice(-6)}`,
       operator: "店长-李明",
-      remark: inboundData.remark,
+      remark: inboundData.supplier ? `供应商:${inboundData.supplier} · ${inboundData.remark}` : inboundData.remark,
       createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-    };
-    addStockRecord(record);
-    updateProduct(product.id, { stock: product.stock + inboundData.qty });
+    });
+    updateProduct(product.id, { stock: product.stock + qty });
     setShowInbound(false);
+    setInboundData({ productId: "", qty: 10, supplier: "", remark: "" });
+  };
+
+  const submitDamage = () => {
+    if (!damageData.productId) return;
+    const product = products.find((p) => p.id === damageData.productId);
+    if (!product) return;
+    const qty = Math.max(1, Math.min(damageData.qty, product.stock));
+    addStockRecord({
+      id: `stk${Date.now()}`,
+      type: "damage",
+      productId: product.id,
+      productName: product.name,
+      quantity: qty,
+      beforeStock: product.stock,
+      afterStock: Math.max(0, product.stock - qty),
+      relatedOrderNo: `DM${Date.now().toString().slice(-6)}`,
+      operator: "店长-李明",
+      remark: damageData.reason ? `${damageData.reason} · ${damageData.remark}` : damageData.remark,
+      createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    });
+    updateProduct(product.id, { stock: Math.max(0, product.stock - qty) });
+    setShowDamage(false);
+    setDamageData({ productId: "", qty: 1, reason: "", remark: "" });
+  };
+
+  const addStocktakeItem = () => {
+    const existing = new Set(stocktakeItems.map((i) => i.productId));
+    const candidates = products.filter((p) => !existing.has(p.id));
+    if (candidates.length === 0) return;
+    const p = candidates[0];
+    setStocktakeItems([
+      ...stocktakeItems,
+      { productId: p.id, productName: p.name, systemStock: p.stock, actualStock: p.stock },
+    ]);
+  };
+
+  const removeStocktakeItem = (pid: string) => {
+    setStocktakeItems(stocktakeItems.filter((i) => i.productId !== pid));
+  };
+
+  const updateStocktakeActual = (pid: string, actual: number) => {
+    setStocktakeItems(
+      stocktakeItems.map((i) => (i.productId === pid ? { ...i, actualStock: Math.max(0, actual) } : i))
+    );
+  };
+
+  const submitStocktake = (confirm: boolean) => {
+    if (!stocktakeName.trim() || stocktakeItems.length === 0) return;
+    const items = stocktakeItems.map((i) => ({ ...i, diff: i.actualStock - i.systemStock }));
+    addStocktake({
+      id: `sk${Date.now()}`,
+      orderNo: `SK${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(Math.floor(Math.random() * 90) + 10)}`,
+      name: stocktakeName.trim(),
+      items,
+      status: confirm ? "confirmed" : "draft",
+      operator: "店长-李明",
+      createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    });
+    if (confirm) {
+      items.forEach((it) => {
+        if (it.diff !== 0) {
+          const p = products.find((x) => x.id === it.productId);
+          if (p) {
+            addStockRecord({
+              id: `stk${Date.now()}-${it.productId}`,
+              type: "stocktake",
+              productId: it.productId,
+              productName: it.productName,
+              quantity: Math.abs(it.diff),
+              beforeStock: it.systemStock,
+              afterStock: it.actualStock,
+              relatedOrderNo: `SK${Date.now().toString().slice(-6)}`,
+              operator: "店长-李明",
+              remark: it.diff > 0 ? "盘盈" : "盘亏",
+              createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+            });
+            updateProduct(it.productId, { stock: it.actualStock });
+          }
+        }
+      });
+    }
+    setShowStocktake(false);
+    setStocktakeName("");
+    setStocktakeItems([]);
+  };
+
+  const shipTransfer = (tid: string) => {
+    const t = transferOrders.find((x) => x.id === tid);
+    if (!t || t.status !== "pending") return;
+    t.items.forEach((it) => {
+      const p = products.find((x) => x.id === it.productId);
+      if (p) {
+        const qty = Math.min(it.quantity, p.stock);
+        addStockRecord({
+          id: `stk${Date.now()}-${it.productId}`,
+          type: "transfer",
+          productId: it.productId,
+          productName: it.productName,
+          quantity: qty,
+          beforeStock: p.stock,
+          afterStock: p.stock - qty,
+          relatedOrderNo: t.orderNo,
+          operator: "店长-李明",
+          remark: `调拨出库至${t.toStore}`,
+          createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+        });
+        updateProduct(it.productId, { stock: Math.max(0, p.stock - qty) });
+      }
+    });
+    updateTransfer(tid, { status: "shipped" });
+  };
+
+  const receiveTransfer = (tid: string) => {
+    const t = transferOrders.find((x) => x.id === tid);
+    if (!t || t.status !== "shipped") return;
+    t.items.forEach((it) => {
+      const p = products.find((x) => x.id === it.productId);
+      if (p) {
+        addStockRecord({
+          id: `stk${Date.now()}-${it.productId}`,
+          type: "transfer",
+          productId: it.productId,
+          productName: it.productName,
+          quantity: it.quantity,
+          beforeStock: p.stock,
+          afterStock: p.stock + it.quantity,
+          relatedOrderNo: t.orderNo,
+          operator: "店长-李明",
+          remark: `调拨入库从${t.fromStore}`,
+          createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+        });
+        updateProduct(it.productId, { stock: p.stock + it.quantity });
+      }
+    });
+    updateTransfer(tid, { status: "received" });
   };
 
   const active = tabs.find((t) => t.id === activeTab)!;
   const Icon = active.icon;
 
+  const todayDamageQty = stockRecords
+    .filter((r) => r.type === "damage")
+    .reduce((s, r) => s + r.quantity, 0);
+  const todayInboundQty = stockRecords
+    .filter((r) => r.type === "inbound")
+    .reduce((s, r) => s + r.quantity, 0);
+  const pendingTransferQty = transferOrders.filter((t) => t.status !== "received").length;
+
   return (
-    <div className="space-y-5 h-[calc(100vh-8rem)] flex flex-col">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 animate-fade-in-up">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">库存管理</h1>
-          <p className="text-sm text-text-secondary mt-1">总库存 {products.reduce((s, p) => s + p.stock, 0)} 件 · 低库存 {lowStockProducts.length} 件</p>
+          <h1 className="text-2xl font-bold text-text-900">库存管理</h1>
+          <p className="text-sm text-text-500 mt-1">
+            总库存 {products.reduce((s, p) => s + p.stock, 0)} 件 · 低库存 {lowStockProducts.length} 件
+          </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-outline">
-            <Download className="w-4 h-4 mr-2" />
+          <button className="btn-outline flex items-center gap-2">
+            <Download className="w-4 h-4" />
             导出报表
           </button>
         </div>
@@ -88,27 +256,27 @@ export default function Inventory() {
 
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "本月入库", val: "¥28,600", qty: "186件", cls: "from-emerald-500 to-teal-500", icon: TrendingUp },
-          { label: "本月报损", val: "¥1,280", qty: "8件", cls: "from-red-500 to-rose-500", icon: TrendingDown },
-          { label: "调拨中", val: "3单", qty: "35件", cls: "from-secondary-500 to-blue-500", icon: Truck },
-          { label: "库存预警", val: `${lowStockProducts.length}个`, qty: "需补货", cls: "from-warning to-orange-500", icon: AlertTriangle },
+          { label: "累计入库", val: todayInboundQty + "件", qty: "记录 " + stockRecords.filter(r => r.type === "inbound").length, cls: "from-emerald-500 to-teal-500", icon: TrendingUp },
+          { label: "累计报损", val: todayDamageQty + "件", qty: "金额 ¥" + (todayDamageQty * 120), cls: "from-danger to-danger-500", icon: TrendingDown },
+          { label: "调拨中", val: pendingTransferQty + "单", qty: "运输中 " + transferOrders.filter(t => t.status === "shipped").length, cls: "from-secondary-500 to-blue-500", icon: Truck },
+          { label: "库存预警", val: lowStockProducts.length + "个", qty: "需补货", cls: "from-warning to-orange-500", icon: AlertTriangle },
         ].map((s, i) => {
           const SIcon = s.icon;
           return (
-            <div key={i} className="card !p-4 flex items-center gap-4">
-              <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br text-white flex items-center justify-center shadow-md", s.cls)}>
+            <div key={i} className="card-sm p-4 flex items-center gap-4">
+              <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br text-white flex items-center justify-center shadow-sm", s.cls)}>
                 <SIcon className="w-6 h-6" />
               </div>
               <div>
-                <div className="text-lg font-bold text-text-primary">{s.val}</div>
-                <div className="text-xs text-text-secondary">{s.label} · {s.qty}</div>
+                <div className="text-2xl font-bold text-text-900">{s.val}</div>
+                <div className="text-xs text-text-500">{s.label} · {s.qty}</div>
               </div>
             </div>
           );
         })}
       </div>
 
-      <div className="card-sm !p-2 bg-white inline-flex gap-1 self-start">
+      <div className="card-sm p-2 bg-white inline-flex gap-1 self-start">
         {tabs.map((t) => {
           const TIcon = t.icon;
           const isActive = activeTab === t.id;
@@ -120,7 +288,7 @@ export default function Inventory() {
                 "px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
                 isActive
                   ? "bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md"
-                  : "text-text-secondary hover:bg-gray-100"
+                  : "text-text-500 hover:bg-background-50"
               )}
             >
               <TIcon className="w-4 h-4" />
@@ -130,20 +298,27 @@ export default function Inventory() {
         })}
       </div>
 
-      <div className="card flex-1 overflow-auto scrollbar-thin">
+      <div className="card-sm">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-50 to-secondary-50 flex items-center justify-center">
               <Icon className="w-5 h-5 text-primary-600" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-text-primary">{active.label}</h3>
-              <p className="text-xs text-text-tertiary">{active.desc}</p>
+              <h3 className="text-base font-bold text-text-900">{active.label}</h3>
+              <p className="text-xs text-text-500">{active.desc}</p>
             </div>
           </div>
           {(activeTab === "inbound" || activeTab === "damage" || activeTab === "stocktake") && (
-            <button className="btn-primary btn-sm" onClick={() => activeTab === "inbound" && setShowInbound(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
+            <button
+              className="btn-primary flex items-center gap-1.5"
+              onClick={() => {
+                if (activeTab === "inbound") setShowInbound(true);
+                if (activeTab === "damage") setShowDamage(true);
+                if (activeTab === "stocktake") setShowStocktake(true);
+              }}
+            >
+              <Plus className="w-4 h-4" />
               {activeTab === "inbound" && "新建入库"}
               {activeTab === "damage" && "报损登记"}
               {activeTab === "stocktake" && "创建盘点"}
@@ -151,8 +326,9 @@ export default function Inventory() {
           )}
         </div>
 
+        {/* ============ 入库 ============ */}
         {activeTab === "inbound" && (
-          <div className="table-wrap">
+          <div className="table-wrap rounded-xl border border-border-100 overflow-hidden">
             <table className="table">
               <thead>
                 <tr>
@@ -170,120 +346,170 @@ export default function Inventory() {
               <tbody>
                 {stockRecords.filter((r) => r.type === "inbound").map((r) => (
                   <tr key={r.id}>
-                    <td className="font-mono text-xs">{r.relatedOrderNo}</td>
+                    <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
                     <td><span className={cn("badge", typeConfig[r.type].cls)}>{typeConfig[r.type].label}</span></td>
-                    <td className="font-medium">{r.productName}</td>
+                    <td className="font-medium text-text-900">{r.productName}</td>
                     <td className="text-emerald-600 font-bold">+{r.quantity}</td>
                     <td>{r.beforeStock}</td>
                     <td>{r.afterStock}</td>
                     <td>{r.operator}</td>
-                    <td className="text-text-tertiary max-w-40 truncate">{r.remark}</td>
-                    <td className="text-text-tertiary text-xs">{r.createdAt}</td>
+                    <td className="text-text-500 max-w-48 truncate">{r.remark}</td>
+                    <td className="text-text-500 text-xs">{r.createdAt}</td>
                   </tr>
                 ))}
+                {stockRecords.filter((r) => r.type === "inbound").length === 0 && (
+                  <tr><td colSpan={9} className="text-center py-10 text-text-400">暂无入库记录</td></tr>
+                )}
               </tbody>
             </table>
           </div>
         )}
 
+        {/* ============ 调拨 ============ */}
         {activeTab === "transfer" && (
           <div className="space-y-3">
+            {transferOrders.length === 0 && <div className="text-center py-10 text-text-400">暂无调拨单</div>}
             {transferOrders.map((t) => (
-              <div key={t.id} className="p-4 rounded-xl border-2 border-border hover:border-secondary-300 transition-all bg-white">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono font-semibold text-secondary-700 bg-secondary-50 px-3 py-1 rounded-lg">{t.orderNo}</span>
-                    <span
-                      className={cn("badge",
-                        t.status === "pending" && "bg-orange-100 text-orange-700",
-                        t.status === "shipped" && "bg-blue-100 text-blue-700",
-                        t.status === "received" && "bg-emerald-100 text-emerald-700",
-                      )}
-                    >
+              <div key={t.id} className={cn(
+                "p-5 rounded-xl border transition-all bg-white",
+                t.status === "received" ? "border-success-200 bg-success-50/30" :
+                t.status === "shipped" ? "border-secondary-200 bg-secondary-50/30" :
+                "border-warning-200 bg-warning-50/30"
+              )}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="font-mono font-semibold text-secondary-700 bg-secondary-50 px-3 py-1.5 rounded-lg">{t.orderNo}</span>
+                    <span className={cn(
+                      "badge",
+                      t.status === "pending" && "badge-warning",
+                      t.status === "shipped" && "badge-info",
+                      t.status === "received" && "badge-success",
+                    )}>
                       {t.status === "pending" && "待发货"}
                       {t.status === "shipped" && "运输中"}
                       {t.status === "received" && "已收货"}
                     </span>
                   </div>
-                  <span className="text-xs text-text-tertiary">{t.createdAt}</span>
+                  <span className="text-xs text-text-500">{t.createdAt}</span>
                 </div>
-                <div className="flex items-center gap-3 text-sm mb-3">
+                <div className="flex items-center gap-3 text-sm mb-4 flex-wrap">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700">{t.fromStore.slice(0, 2)}</div>
-                    <span className="font-medium">{t.fromStore}</span>
+                    <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700">{t.fromStore.slice(0, 2)}</div>
+                    <span className="font-medium text-text-900">{t.fromStore}</span>
                   </div>
-                  <ArrowLeftRight className="w-4 h-4 text-text-tertiary" />
+                  <div className="flex items-center gap-1 px-3 py-1 rounded-full bg-background-50">
+                    <Truck className="w-3.5 h-3.5 text-text-400" />
+                    <ArrowLeftRight className="w-4 h-4 text-text-400" />
+                  </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">{t.toStore}</span>
-                    <div className="w-7 h-7 rounded-lg bg-secondary-100 flex items-center justify-center text-xs font-bold text-secondary-700">{t.toStore.slice(0, 2)}</div>
+                    <span className="font-medium text-text-900">{t.toStore}</span>
+                    <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center text-xs font-bold text-secondary-700">{t.toStore.slice(0, 2)}</div>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 mb-4">
                   {t.items.map((it) => (
-                    <span key={it.productId} className="px-2.5 py-1 bg-gray-100 rounded-lg text-xs text-text-secondary">
-                      {it.productName} × {it.quantity}
+                    <span key={it.productId} className="px-3 py-1.5 bg-background-50 border border-border-100 rounded-lg text-xs text-text-700">
+                      <Package className="w-3 h-3 inline mr-1" />
+                      {it.productName} × <span className="font-semibold text-primary-600">{it.quantity}</span>
                     </span>
                   ))}
                 </div>
-                <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
-                  <span className="text-xs text-text-tertiary">操作人：{t.operator}</span>
-                  {t.status === "pending" && <button className="btn-primary btn-sm"><Truck className="w-3.5 h-3.5 mr-1.5" />发货</button>}
-                  {t.status === "shipped" && <button className="btn-secondary btn-sm"><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />确认收货</button>}
+                <div className="mt-3 pt-4 border-t border-border-100 flex items-center justify-between">
+                  <span className="text-xs text-text-500">操作人：{t.operator}</span>
+                  <div className="flex gap-2">
+                    {t.status === "pending" && (
+                      <button className="btn-primary flex items-center gap-1.5" onClick={() => shipTransfer(t.id)}>
+                        <Truck className="w-4 h-4" />确认发货
+                      </button>
+                    )}
+                    {t.status === "shipped" && (
+                      <button className="btn-secondary flex items-center gap-1.5" onClick={() => receiveTransfer(t.id)}>
+                        <CheckCircle2 className="w-4 h-4" />确认收货
+                      </button>
+                    )}
+                    {t.status === "received" && (
+                      <span className="flex items-center gap-1 text-success-600 text-sm font-medium px-3 py-1.5 bg-success-50 rounded-lg">
+                        <FileCheck className="w-4 h-4" />调拨完成
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
 
+        {/* ============ 盘点 ============ */}
         {activeTab === "stocktake" && (
           <div className="space-y-3">
-            {stocktakeOrders.map((s) => (
-              <div key={s.id} className="p-4 rounded-xl border-2 border-border bg-white">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-text-primary">{s.name}</span>
-                      <span className="font-mono text-xs text-text-tertiary">{s.orderNo}</span>
+            {stocktakeOrders.length === 0 && <div className="text-center py-10 text-text-400">暂无盘点任务</div>}
+            {stocktakeOrders.map((s) => {
+              const diff = s.items.reduce((sum, it) => sum + Math.abs(it.diff), 0);
+              const profit = s.items.reduce((sum, it) => sum + it.diff, 0);
+              return (
+                <div key={s.id} className="p-5 rounded-xl border-2 border-border-100 bg-white transition-all hover:border-primary-200">
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-text-900 text-base">{s.name}</span>
+                        <span className="font-mono text-xs text-text-500 bg-background-50 px-2 py-1 rounded">{s.orderNo}</span>
+                      </div>
+                      <div className="text-xs text-text-500 mt-1">{s.createdAt} · {s.operator}</div>
                     </div>
-                    <div className="text-xs text-text-tertiary mt-0.5">{s.createdAt} · {s.operator}</div>
+                    <div className="flex items-center gap-3">
+                      {diff > 0 && (
+                        <div className={cn(
+                          "text-xs font-medium px-2.5 py-1 rounded-lg",
+                          profit < 0 ? "bg-danger-50 text-danger-600" : profit > 0 ? "bg-success-50 text-success-600" : "bg-background-50 text-text-600"
+                        )}>
+                          <AlertCircle className="w-3 h-3 inline mr-1" />
+                          差异 {profit > 0 ? "+" : ""}{profit} 件
+                        </div>
+                      )}
+                      <span className={cn(
+                        "badge",
+                        s.status === "draft" ? "badge-default" : "badge-success"
+                      )}>
+                        {s.status === "draft" ? "草稿" : "已确认"}
+                      </span>
+                    </div>
                   </div>
-                  <span className={cn("badge", s.status === "draft" ? "bg-gray-100 text-gray-700" : "bg-emerald-100 text-emerald-700")}>
-                    {s.status === "draft" ? "草稿" : "已确认"}
-                  </span>
-                </div>
-                <div className="table-wrap">
-                  <table className="table text-xs">
-                    <thead>
-                      <tr>
-                        <th>商品</th>
-                        <th className="text-right">系统库存</th>
-                        <th className="text-right">实盘数</th>
-                        <th className="text-right">差异</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {s.items.map((it) => (
-                        <tr key={it.productId}>
-                          <td>{it.productName}</td>
-                          <td className="text-right">{it.systemStock}</td>
-                          <td className="text-right">{it.actualStock}</td>
-                          <td className={cn("text-right font-bold",
-                            it.diff < 0 ? "text-danger" : it.diff > 0 ? "text-emerald-600" : "text-text-tertiary"
-                          )}>
-                            {it.diff > 0 ? "+" : ""}{it.diff}
-                          </td>
+                  <div className="table-wrap rounded-lg overflow-hidden border border-border-100">
+                    <table className="table text-sm">
+                      <thead>
+                        <tr>
+                          <th>商品</th>
+                          <th className="text-right">系统库存</th>
+                          <th className="text-right">实盘数</th>
+                          <th className="text-right">差异</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {s.items.map((it) => (
+                          <tr key={it.productId}>
+                            <td className="font-medium text-text-800">{it.productName}</td>
+                            <td className="text-right text-text-600">{it.systemStock}</td>
+                            <td className="text-right font-medium text-text-900">{it.actualStock}</td>
+                            <td className={cn(
+                              "text-right font-bold",
+                              it.diff < 0 ? "text-danger-600" : it.diff > 0 ? "text-success-600" : "text-text-400"
+                            )}>
+                              {it.diff > 0 ? "+" : ""}{it.diff}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
+        {/* ============ 报损 ============ */}
         {activeTab === "damage" && (
-          <div className="table-wrap">
+          <div className="table-wrap rounded-xl border border-border-100 overflow-hidden">
             <table className="table">
               <thead>
                 <tr>
@@ -300,59 +526,71 @@ export default function Inventory() {
               <tbody>
                 {stockRecords.filter((r) => r.type === "damage").map((r) => (
                   <tr key={r.id}>
-                    <td className="font-mono text-xs">{r.relatedOrderNo}</td>
-                    <td className="font-medium">{r.productName}</td>
-                    <td className="text-danger font-bold">-{r.quantity}</td>
+                    <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
+                    <td className="font-medium text-text-900">{r.productName}</td>
+                    <td className="text-danger-600 font-bold">-{r.quantity}</td>
                     <td>{r.beforeStock}</td>
                     <td>{r.afterStock}</td>
-                    <td className="text-text-tertiary">{r.remark}</td>
+                    <td className="text-text-600 max-w-48">{r.remark || "-"}</td>
                     <td>{r.operator}</td>
-                    <td className="text-text-tertiary text-xs">{r.createdAt}</td>
+                    <td className="text-text-500 text-xs">{r.createdAt}</td>
                   </tr>
                 ))}
+                {stockRecords.filter((r) => r.type === "damage").length === 0 && (
+                  <tr><td colSpan={8} className="text-center py-10 text-text-400">暂无报损记录</td></tr>
+                )}
               </tbody>
             </table>
           </div>
         )}
 
+        {/* ============ 预警 ============ */}
         {activeTab === "warning" && (
           <div>
-            <div className="p-4 mb-5 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200">
-              <div className="flex items-center gap-3 mb-2">
-                <AlertTriangle className="w-5 h-5 text-orange-600" />
-                <span className="text-sm font-semibold text-orange-800">
-                  以下商品库存低于安全阈值，请及时补货
+            <div className="p-4 mb-5 rounded-xl bg-gradient-to-r from-warning-50 to-orange-50 border border-warning-200">
+              <div className="flex items-center gap-3 mb-1.5">
+                <AlertTriangle className="w-5 h-5 text-warning-600" />
+                <span className="text-sm font-semibold text-warning-800">
+                  以下 {lowStockProducts.length} 个商品库存低于安全阈值，请及时补货
                 </span>
               </div>
-              <div className="text-xs text-orange-700">共 {lowStockProducts.length} 个商品需要关注</div>
+              <div className="text-xs text-warning-700/80">建议立即通过入库管理流程采购补充</div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {lowStockProducts.length === 0 && <div className="col-span-full text-center py-12 text-text-400">暂无低库存预警</div>}
               {lowStockProducts.map((p) => (
-                <div key={p.id} className="p-4 rounded-xl border-2 border-red-200 bg-gradient-to-br from-red-50/50 to-white hover:shadow-card-hover transition-all">
+                <div key={p.id} className="p-4 rounded-xl border-2 border-danger-200 bg-gradient-to-br from-danger-50/50 to-white hover:shadow-pop transition-all">
                   <div className="flex items-center gap-3 mb-3">
-                    <img src={p.imageUrl} className="w-14 h-14 rounded-lg object-cover" />
+                    <img src={p.imageUrl} className="w-14 h-14 rounded-lg object-cover border border-border-100" />
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-text-primary truncate">{p.name}</div>
-                      <div className="text-xs text-text-tertiary">{p.categoryName} · {p.ageRange}</div>
+                      <div className="font-semibold text-text-900 truncate">{p.name}</div>
+                      <div className="text-xs text-text-500">{p.categoryName} · {p.ageRange}</div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2.5">
                     <div>
-                      <span className="text-xs text-text-tertiary">当前库存</span>
-                      <div className="text-xl font-bold text-danger">{p.stock}</div>
+                      <span className="text-xs text-text-500">当前库存</span>
+                      <div className="text-2xl font-bold text-danger-600">{p.stock}</div>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs text-text-tertiary">安全库存</span>
-                      <div className="text-lg font-semibold text-text-secondary">{p.safetyStock}</div>
+                      <span className="text-xs text-text-500">安全库存</span>
+                      <div className="text-lg font-semibold text-text-700">{p.safetyStock}</div>
                     </div>
                     <div className="w-24">
-                      <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-danger to-orange-400 rounded-full" style={{ width: `${Math.min(100, (p.stock / p.safetyStock) * 100)}%` }}></div>
+                      <div className="h-2.5 bg-background-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-danger-500 to-warning-500 rounded-full" style={{ width: `${Math.min(100, (p.stock / p.safetyStock) * 100)}%` }}></div>
                       </div>
-                      <div className="text-[10px] text-right mt-1 text-danger font-medium">缺口 {p.safetyStock - p.stock}</div>
+                      <div className="text-[10px] text-right mt-1 text-danger-600 font-medium">缺 {p.safetyStock - p.stock}</div>
                     </div>
                   </div>
-                  <button className="w-full btn-primary btn-sm">立即补货</button>
+                  <button
+                    className="w-full btn-primary btn-sm"
+                    onClick={() => {
+                      setActiveTab("inbound");
+                      setShowInbound(true);
+                      setInboundData({ productId: p.id, qty: p.safetyStock, supplier: "", remark: "补货" });
+                    }}
+                  >立即补货</button>
                 </div>
               ))}
             </div>
@@ -360,43 +598,208 @@ export default function Inventory() {
         )}
       </div>
 
+      {/* ============ 入库弹窗 ============ */}
       {showInbound && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40" onClick={() => setShowInbound(false)}>
-          <div className="w-full max-w-lg bg-white rounded-2xl shadow-pop p-6 animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-text-primary mb-4 flex items-center gap-2">
-              <PackagePlus className="w-5 h-5 text-emerald-600" /> 新建入库单
-            </h2>
+        <Modal title="新建入库单" onClose={() => setShowInbound(false)}>
+          <ModalBody>
             <div className="space-y-4">
-              <div>
-                <label className="label">选择商品 *</label>
+              <Field label="选择商品 *">
                 <select className="select" value={inboundData.productId} onChange={(e) => setInboundData({ ...inboundData, productId: e.target.value })}>
                   <option value="">请选择商品</option>
                   {products.map((p) => <option key={p.id} value={p.id}>{p.name} (库存: {p.stock})</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="label">入库数量</label>
-                <input type="number" className="input" value={inboundData.qty} onChange={(e) => setInboundData({ ...inboundData, qty: Number(e.target.value) })} />
-              </div>
-              <div>
-                <label className="label">供应商</label>
+              </Field>
+              <Field label="入库数量">
+                <input type="number" min="1" className="input" value={inboundData.qty} onChange={(e) => setInboundData({ ...inboundData, qty: Number(e.target.value) })} />
+              </Field>
+              <Field label="供应商">
                 <select className="select" value={inboundData.supplier} onChange={(e) => setInboundData({ ...inboundData, supplier: e.target.value })}>
-                  <option>请选择</option>
-                  {useAppStore.getState().suppliers.map((s) => <option key={s.id}>{s.name}</option>)}
+                  <option value="">请选择</option>
+                  {suppliers.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="label">备注</label>
+              </Field>
+              <Field label="备注">
                 <input className="input" value={inboundData.remark} onChange={(e) => setInboundData({ ...inboundData, remark: e.target.value })} placeholder="选填" />
+              </Field>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn-outline" onClick={() => setShowInbound(false)}>取消</button>
+            <button className="btn-primary" onClick={submitInbound}>确认入库</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* ============ 报损弹窗 ============ */}
+      {showDamage && (
+        <Modal title="商品报损登记" onClose={() => setShowDamage(false)}>
+          <ModalBody>
+            <div className="space-y-4">
+              <Field label="选择商品 *">
+                <select className="select" value={damageData.productId} onChange={(e) => setDamageData({ ...damageData, productId: e.target.value })}>
+                  <option value="">请选择商品</option>
+                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} (库存: {p.stock})</option>)}
+                </select>
+              </Field>
+              <Field label="报损数量">
+                <input
+                  type="number"
+                  min="1"
+                  max={damageData.productId ? (products.find(p => p.id === damageData.productId)?.stock || 1) : 9999}
+                  className="input"
+                  value={damageData.qty}
+                  onChange={(e) => setDamageData({ ...damageData, qty: Number(e.target.value) })}
+                />
+                {damageData.productId && (
+                  <p className="text-xs text-text-500 mt-1">当前库存 {products.find(p => p.id === damageData.productId)?.stock} 件</p>
+                )}
+              </Field>
+              <Field label="报损原因">
+                <select className="select" value={damageData.reason} onChange={(e) => setDamageData({ ...damageData, reason: e.target.value })}>
+                  <option value="">请选择</option>
+                  <option>自然损坏（老化）</option>
+                  <option>人为损坏（顾客）</option>
+                  <option>人为损坏（内部）</option>
+                  <option>运输破损</option>
+                  <option>丢失被盗</option>
+                  <option>质量问题</option>
+                  <option>过期淘汰</option>
+                </select>
+              </Field>
+              <Field label="详细说明">
+                <textarea
+                  className="input min-h-[80px] resize-none"
+                  value={damageData.remark}
+                  onChange={(e) => setDamageData({ ...damageData, remark: e.target.value })}
+                  placeholder="请描述具体情况..."
+                />
+              </Field>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn-outline" onClick={() => setShowDamage(false)}>取消</button>
+            <button className="btn-danger bg-danger hover:bg-danger-600" onClick={submitDamage}>确认报损</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* ============ 盘点弹窗 ============ */}
+      {showStocktake && (
+        <Modal title="创建盘点任务" onClose={() => setShowStocktake(false)} size="xl">
+          <ModalBody>
+            <div className="space-y-4">
+              <Field label="盘点名称 *">
+                <input
+                  className="input"
+                  placeholder="例：6月中旬全店盘点 / 积木区周盘"
+                  value={stocktakeName}
+                  onChange={(e) => setStocktakeName(e.target.value)}
+                />
+              </Field>
+              <div className="flex items-center justify-between">
+                <label className="label mb-0">盘点商品明细</label>
+                <button className="btn-outline btn-sm flex items-center gap-1" onClick={addStocktakeItem}>
+                  <Plus className="w-3.5 h-3.5" />添加商品
+                </button>
+              </div>
+              <div className="rounded-xl border border-border-100 max-h-80 overflow-auto">
+                <table className="table text-sm">
+                  <thead className="sticky top-0 bg-background-50">
+                    <tr>
+                      <th>商品名称</th>
+                      <th className="text-right">系统库存</th>
+                      <th className="text-right">实盘数</th>
+                      <th className="text-right">差异</th>
+                      <th className="w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stocktakeItems.length === 0 && (
+                      <tr><td colSpan={5} className="text-center py-8 text-text-400 text-sm">点击右上角「添加商品」选择需盘点的商品</td></tr>
+                    )}
+                    {stocktakeItems.map((it) => (
+                      <tr key={it.productId}>
+                        <td className="font-medium text-text-800">{it.productName}</td>
+                        <td className="text-right text-text-600 font-mono">{it.systemStock}</td>
+                        <td className="text-right w-32">
+                          <input
+                            type="number"
+                            min="0"
+                            className="input !py-1.5 text-right !text-sm"
+                            value={it.actualStock}
+                            onChange={(e) => updateStocktakeActual(it.productId, Number(e.target.value))}
+                          />
+                        </td>
+                        <td className={cn(
+                          "text-right font-bold font-mono",
+                          (it.actualStock - it.systemStock) < 0 ? "text-danger-600" :
+                          (it.actualStock - it.systemStock) > 0 ? "text-success-600" : "text-text-400"
+                        )}>
+                          {it.actualStock - it.systemStock > 0 ? "+" : ""}{it.actualStock - it.systemStock}
+                        </td>
+                        <td className="text-center">
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-danger-50 text-text-400 hover:text-danger-600 transition"
+                            onClick={() => removeStocktakeItem(it.productId)}
+                          ><X className="w-4 h-4" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-outline" onClick={() => setShowInbound(false)}>取消</button>
-              <button className="btn-primary" onClick={submitInbound}>确认入库</button>
-            </div>
-          </div>
-        </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn-outline" onClick={() => setShowStocktake(false)}>取消</button>
+            <button className="btn-outline" onClick={() => submitStocktake(false)}>保存草稿</button>
+            <button className="btn-primary" onClick={() => submitStocktake(true)}>确认盘点(同步库存)</button>
+          </ModalFooter>
+        </Modal>
       )}
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children, size = "md" }: any) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 animate-fade-in-up" onClick={onClose}>
+      <div
+        className={cn(
+          "w-full bg-white rounded-2xl shadow-pop overflow-hidden",
+          size === "xl" ? "max-w-3xl" : size === "lg" ? "max-w-2xl" : "max-w-lg"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border-100">
+          <h2 className="text-lg font-bold text-text-900">{title}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-background-50 text-text-400 hover:text-text-700 transition">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ModalBody({ children }: any) {
+  return <div className="px-6 py-5">{children}</div>;
+}
+
+function ModalFooter({ children }: any) {
+  return (
+    <div className="px-6 py-4 bg-background-50 border-t border-border-100 flex justify-end gap-3">
+      {children}
+    </div>
+  );
+}
+
+function Field({ label, children }: any) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      {children}
     </div>
   );
 }

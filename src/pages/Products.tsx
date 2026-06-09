@@ -33,6 +33,7 @@ export default function Products() {
   const categories = useAppStore((s) => s.categories);
   const tags = useAppStore((s) => s.tags.filter((t) => t.type === "product"));
   const addProduct = useAppStore((s) => s.addProduct);
+  const deleteProduct = useAppStore((s) => s.deleteProduct);
 
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -70,8 +71,8 @@ export default function Products() {
 
   const filtered = products.filter((p) => {
     const matchesSearch = !search || p.name.includes(search) || p.sku.includes(search) || p.barcode.includes(search);
-    const matchesCat = !activeCategory || p.categoryId === activeCategory || categories.find((c) => c.id === activeCategory && !c.parentId) ? activeCategory && (p.categoryId === activeCategory || categories.find((c) => c.id === p.categoryId)?.parentId === activeCategory) : true;
-    return matchesSearch && (activeCategory ? matchesCat : true);
+    const matchesCat = !activeCategory || p.categoryId === activeCategory;
+    return matchesSearch && matchesCat;
   });
 
   const openForm = (p?: Product) => {
@@ -197,7 +198,7 @@ export default function Products() {
           </div>
           {rootCats.map((cat) => {
             const children = subCats(cat.id);
-            const count = products.filter((p) => p.categoryId === cat.id || categories.find((c) => c.id === p.categoryId)?.parentId === cat.id).length;
+            const count = products.filter((p) => p.categoryId === cat.id).length;
             const expanded = expandedCats.has(cat.id);
             return (
               <div key={cat.id}>
@@ -277,7 +278,15 @@ export default function Products() {
                       <button className="w-7 h-7 rounded-lg bg-white/90 shadow-md flex items-center justify-center hover:bg-primary-50" onClick={() => openForm(p)}>
                         <Edit2 className="w-3.5 h-3.5 text-primary-600" />
                       </button>
-                      <button className="w-7 h-7 rounded-lg bg-white/90 shadow-md flex items-center justify-center hover:bg-red-50">
+                      <button
+                        className="w-7 h-7 rounded-lg bg-white/90 shadow-md flex items-center justify-center hover:bg-red-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`确认删除商品「${p.name}」吗？此操作不可撤销。`)) {
+                            deleteProduct(p.id);
+                          }
+                        }}
+                      >
                         <Trash2 className="w-3.5 h-3.5 text-danger" />
                       </button>
                     </div>

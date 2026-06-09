@@ -34,6 +34,7 @@ export default function Sales() {
   const saleOrders = useAppStore((s) => s.saleOrders);
   const addSale = useAppStore((s) => s.addSale);
   const updateProduct = useAppStore((s) => s.updateProduct);
+  const updateSale = useAppStore((s) => s.updateSale);
 
   const [cart, setCart] = useState<{ productId: string; productName: string; price: number; qty: number; discount: number; imageUrl: string }[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -44,6 +45,12 @@ export default function Sales() {
   const [showHistory, setShowHistory] = useState(false);
   const [showReturn, setShowReturn] = useState(false);
   const [showPaid, setShowPaid] = useState<null | { no: string; amount: number }>(null);
+
+  const [returnOrderNo, setReturnOrderNo] = useState("");
+  const [returnType, setReturnType] = useState<"return" | "exchange">("return");
+  const [returnReason, setReturnReason] = useState("");
+  const [refundAmount, setRefundAmount] = useState(0);
+  const [processNote, setProcessNote] = useState("");
 
   const rootCats = categories.filter((c) => !c.parentId);
 
@@ -115,6 +122,70 @@ export default function Sales() {
     setCart([]);
     setDiscount(0);
     setTimeout(() => setShowPaid(null), 2500);
+  };
+
+  const foundOrder = saleOrders.find((o) => o.orderNo === returnOrderNo.trim());
+
+  const resetReturnForm = () => {
+    setReturnOrderNo("");
+    setReturnType("return");
+    setReturnReason("");
+    setRefundAmount(0);
+    setProcessNote("");
+  };
+
+  const openReturnForOrder = (order: any) => {
+    setReturnOrderNo(order.orderNo);
+    setReturnType("return");
+    setReturnReason("");
+    setRefundAmount(order.totalAmount);
+    setProcessNote("");
+    setShowReturn(true);
+  };
+
+  const openExchangeForOrder = (order: any) => {
+    setReturnOrderNo(order.orderNo);
+    setReturnType("exchange");
+    setReturnReason("");
+    setRefundAmount(0);
+    setProcessNote("");
+    setShowReturn(true);
+  };
+
+  const submitReturnProcess = () => {
+    if (!foundOrder) return alert("未找到对应的订单号");
+    if (foundOrder.status !== "paid") return alert("该订单已处理过退换货，无法重复操作");
+    if (returnType === "return" && refundAmount < 0) return alert("退款金额不能为负数");
+    if (!returnReason.trim()) return alert("请填写退换货原因");
+
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const now = new Date();
+    const processedAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    if (returnType === "return") {
+      foundOrder.items.forEach((it: any) => {
+        const p = products.find((x) => x.id === it.productId);
+        if (p) updateProduct(p.id, { stock: p.stock + it.quantity });
+      });
+      updateSale(foundOrder.id, {
+        status: "returned",
+        returnReason,
+        refundAmount,
+        processNote,
+        processedAt,
+      });
+    } else {
+      updateSale(foundOrder.id, {
+        status: "exchanged",
+        exchangeReason: returnReason,
+        processNote,
+        processedAt,
+      });
+    }
+
+    alert(`${returnType === "return" ? "退货退款" : "换货"}处理成功！`);
+    resetReturnForm();
+    setShowReturn(false);
   };
 
   return (
@@ -404,6 +475,7 @@ export default function Sales() {
                     <th>支付</th>
                     <th>会员</th>
                     <th>状态</th>
+                    <th>处理结果</th>
                     <th>时间</th>
                     <th>操作</th>
                   </tr>
@@ -433,10 +505,30 @@ export default function Sales() {
                           {o.status === "paid" ? "已支付" : o.status === "returned" ? "已退货" : "已换货"}
                         </span>
                       </td>
+                      <td className="text-xs min-w-[180px]">
+                        {o.status === "paid" ? (
+                          <span className="text-text-tertiary">—</span>
+                        ) : o.status === "returned" ? (
+                          <div>
+                            <div className="text-red-600 font-medium">退款 ¥{o.refundAmount ?? 0}</div>
+                            <div className="text-text-tertiary mt-0.5 truncate" title={o.returnReason}>原因：{o.returnReason || "—"}</div>
+                            {o.processedAt && <div className="text-text-tertiary">{o.processedAt}</div>}
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-orange-600 font-medium">已换货</div>
+                            <div className="text-text-tertiary mt-0.5 truncate" title={o.exchangeReason}>原因：{o.exchangeReason || "—"}</div>
+                            {o.processedAt && <div className="text-text-tertiary">{o.processedAt}</div>}
+                          </div>
+                        )}
+                      </td>
                       <td className="text-xs text-text-tertiary">{o.createdAt}</td>
-                      <td>
+                      <td className="min-w-[120px]">
                         {o.status === "paid" && (
-                          <button className="text-xs text-primary-600 hover:underline" onClick={() => setShowReturn(true)}>退货</button>
+                          <div className="flex gap-2">
+                            <button className="text-xs text-primary-600 hover:underline" onClick={() => openReturnForOrder(o)}>退货</button>
+                            <button className="text-xs text-orange-600 hover:underline" onClick={() => openExchangeForOrder(o)}>换货</button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -449,41 +541,167 @@ export default function Sales() {
       )}
 
       {showReturn && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40" onClick={() => setShowReturn(false)}>
-          <div className="w-full max-w-lg bg-white rounded-2xl shadow-pop p-6 animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40" onClick={() => { setShowReturn(false); resetReturnForm(); }}>
+          <div className="w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl shadow-pop p-6 animate-fade-in-up overflow-auto scrollbar-thin" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold mb-5 flex items-center gap-2">
               <RefreshCcw className="w-5 h-5 text-warning" /> 退换货处理
             </h2>
             <div className="space-y-4">
               <div>
                 <label className="label">原订单号 *</label>
-                <input className="input" placeholder="输入或扫码原订单号" />
+                <input
+                  className="input"
+                  placeholder="输入或扫码原订单号，例如 S2025..."
+                  value={returnOrderNo}
+                  onChange={(e) => {
+                    setReturnOrderNo(e.target.value);
+                    const ord = saleOrders.find((o) => o.orderNo === e.target.value.trim());
+                    if (ord && returnType === "return") {
+                      setRefundAmount(ord.totalAmount);
+                    }
+                  }}
+                />
+                {returnOrderNo && (
+                  <div className="mt-2 text-xs">
+                    {foundOrder ? (
+                      <span className="text-emerald-600">✓ 找到订单：{foundOrder.items.map((i) => i.productName).join("、")}，金额 ¥{foundOrder.totalAmount}</span>
+                    ) : (
+                      <span className="text-danger">未找到该订单号对应的订单</span>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {foundOrder && (
+                <div className="p-4 rounded-xl bg-gray-50 border border-border space-y-2 text-sm">
+                  <div className="font-semibold text-text-primary border-b border-border pb-2 mb-2">📋 原订单详情</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>订单号：<span className="font-mono">{foundOrder.orderNo}</span></div>
+                    <div>下单时间：{foundOrder.createdAt}</div>
+                    <div>商品件数：{foundOrder.items.reduce((s, i) => s + i.quantity, 0)} 件</div>
+                    <div>订单金额：<span className="text-primary-600 font-semibold">¥{foundOrder.totalAmount}</span></div>
+                    <div>支付方式：{foundOrder.payMethod === "cash" ? "现金" : foundOrder.payMethod === "wechat" ? "微信" : foundOrder.payMethod === "alipay" ? "支付宝" : "会员卡"}</div>
+                    <div>会员：{members.find((m) => m.id === foundOrder.memberId)?.name || "散客"}</div>
+                  </div>
+                  <div className="pt-2 mt-2 border-t border-border">
+                    <div className="text-xs text-text-secondary mb-1">商品明细：</div>
+                    {foundOrder.items.map((it, idx) => (
+                      <div key={idx} className="flex justify-between py-1 text-xs border-b border-dashed last:border-0">
+                        <span>{it.productName} × {it.quantity}</span>
+                        <span>¥{(it.price * it.quantity * it.discount).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {foundOrder.status !== "paid" && (
+                    <div className="mt-2 text-xs text-danger font-medium">
+                      ⚠️ 该订单当前状态：{foundOrder.status === "returned" ? "已退货" : "已换货"}，无法再次处理！
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="label">处理类型</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <button className="py-8 rounded-xl border-2 border-primary-500 bg-primary-50 text-primary-700 font-semibold">
+                  <button
+                    className={cn(
+                      "py-4 rounded-xl border-2 font-semibold transition-all",
+                      returnType === "return"
+                        ? "border-primary-500 bg-primary-50 text-primary-700 shadow-sm"
+                        : "border-border text-text-secondary hover:border-secondary-400 hover:bg-secondary-50 hover:text-secondary-700"
+                    )}
+                    onClick={() => {
+                      setReturnType("return");
+                      if (foundOrder) setRefundAmount(foundOrder.totalAmount);
+                    }}
+                  >
                     <RefreshCcw className="w-6 h-6 mx-auto mb-1" />
                     退货退款
                   </button>
-                  <button className="py-8 rounded-xl border-2 border-border text-text-secondary hover:border-secondary-400 hover:bg-secondary-50 hover:text-secondary-700 font-semibold">
+                  <button
+                    className={cn(
+                      "py-4 rounded-xl border-2 font-semibold transition-all",
+                      returnType === "exchange"
+                        ? "border-orange-500 bg-orange-50 text-orange-700 shadow-sm"
+                        : "border-border text-text-secondary hover:border-orange-400 hover:bg-orange-50 hover:text-orange-700"
+                    )}
+                    onClick={() => {
+                      setReturnType("exchange");
+                      setRefundAmount(0);
+                    }}
+                  >
                     <ArrowLeftRight className="w-6 h-6 mx-auto mb-1" />
                     换货
                   </button>
                 </div>
               </div>
+
+              {returnType === "return" && (
+                <div>
+                  <label className="label">退款金额 (¥)</label>
+                  <input
+                    type="number"
+                    className="input"
+                    value={refundAmount}
+                    min={0}
+                    step={0.01}
+                    onChange={(e) => setRefundAmount(Number(e.target.value))}
+                  />
+                  {foundOrder && (
+                    <div className="mt-1 text-xs text-text-secondary">
+                      原订单实付 ¥{foundOrder.totalAmount}，可根据情况部分退款
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
-                <label className="label">退款金额 (¥)</label>
-                <input type="number" className="input" defaultValue={0} />
+                <label className="label">{returnType === "return" ? "退货原因 *" : "换货原因 *"}</label>
+                <select
+                  className="select mb-2"
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                >
+                  <option value="">请选择原因...</option>
+                  {returnType === "return" ? (
+                    <>
+                      <option value="商品质量问题">商品质量问题</option>
+                      <option value="商品与描述不符">商品与描述不符</option>
+                      <option value="不喜欢/不合适">不喜欢/不合适</option>
+                      <option value="误购">误购</option>
+                      <option value="其他">其他</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="商品质量问题">商品质量问题</option>
+                      <option value="尺码不合适">尺码不合适</option>
+                      <option value="款式不满意">款式不满意</option>
+                      <option value="发错商品">发错商品</option>
+                      <option value="其他">其他</option>
+                    </>
+                  )}
+                </select>
               </div>
+
               <div>
-                <label className="label">原因</label>
-                <textarea className="input min-h-[80px]" placeholder="请输入退换货原因..." />
+                <label className="label">处理备注</label>
+                <textarea
+                  className="input min-h-[70px]"
+                  placeholder="（选填）补充说明处理细节..."
+                  value={processNote}
+                  onChange={(e) => setProcessNote(e.target.value)}
+                />
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button className="btn-outline" onClick={() => setShowReturn(false)}>取消</button>
-              <button className="btn-primary" onClick={() => setShowReturn(false)}>确认处理</button>
+            <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-border">
+              <button className="btn-outline" onClick={() => { setShowReturn(false); resetReturnForm(); }}>取消</button>
+              <button
+                className={cn(
+                  "btn-primary",
+                  (!foundOrder || foundOrder.status !== "paid" || !returnReason.trim() || (returnType === "return" && refundAmount < 0)) && "opacity-50 cursor-not-allowed"
+                )}
+                onClick={submitReturnProcess}
+              >确认处理</button>
             </div>
           </div>
         </div>
