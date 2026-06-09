@@ -80,7 +80,7 @@ export interface SaleOrder {
 
 export interface StockRecord {
   id: string;
-  type: "inbound" | "transfer" | "stocktake" | "damage";
+  type: "inbound" | "transfer" | "stocktake" | "damage" | "rental_out" | "rental_in" | "sale" | "sale_return";
   productId: string;
   productName: string;
   quantity: number;
@@ -156,7 +156,7 @@ export interface TransferOrder {
   orderNo: string;
   fromStore: string;
   toStore: string;
-  items: { productId: string; productName: string; quantity: number }[];
+  items: { productId: string; productName: string; quantity: number; shippedQuantity?: number }[];
   status: "pending" | "shipped" | "received";
   operator: string;
   createdAt: string;

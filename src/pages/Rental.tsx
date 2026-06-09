@@ -50,6 +50,7 @@ export default function Rental() {
     addMember,
     addRental,
     updateProduct,
+    addStockRecord,
   } = useAppStore();
 
   const [activeMember, setActiveMember] = useState<string | null>(null);
@@ -160,7 +161,22 @@ export default function Rental() {
 
     rental.items.forEach((it: any) => {
       const p = products.find((x) => x.id === it.productId);
-      if (p) updateProduct(p.id, { stock: p.stock + it.quantity });
+      if (p) {
+        addStockRecord({
+          id: `stk${Date.now()}-${it.productId}`,
+          type: "rental_in",
+          productId: it.productId,
+          productName: it.productName,
+          quantity: it.quantity,
+          beforeStock: p.stock,
+          afterStock: p.stock + it.quantity,
+          relatedOrderNo: rental.orderNo,
+          operator: "店员小陈",
+          remark: penalty > 0 ? `归还 · 罚金¥${penalty}` : "正常归还",
+          createdAt: returnDate,
+        });
+        updateProduct(p.id, { stock: p.stock + it.quantity });
+      }
     });
 
     updateRental(rental.id, {
@@ -202,9 +218,26 @@ export default function Rental() {
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
+    const rentalOrderNo = `R${new Date().getFullYear()}${pad(new Date().getMonth() + 1)}${pad(new Date().getDate())}${Math.floor(Math.random() * 900 + 100)}`;
+
     rentalFormData.products.forEach((it) => {
       const p = products.find((x) => x.id === it.productId);
-      if (p) updateProduct(p.id, { stock: Math.max(0, p.stock - it.qty) });
+      if (p) {
+        addStockRecord({
+          id: `stk${Date.now()}-${it.productId}`,
+          type: "rental_out",
+          productId: it.productId,
+          productName: it.productName,
+          quantity: it.qty,
+          beforeStock: p.stock,
+          afterStock: Math.max(0, p.stock - it.qty),
+          relatedOrderNo: rentalOrderNo,
+          operator: "店员小陈",
+          remark: `租借${rentalFormData.days}天，会员${member?.name || ""}`,
+          createdAt: fmt(start),
+        });
+        updateProduct(p.id, { stock: Math.max(0, p.stock - it.qty) });
+      }
     });
 
     if (member) {
@@ -213,7 +246,7 @@ export default function Rental() {
 
     addRental({
       id: `r${Date.now()}`,
-      orderNo: `R${new Date().getFullYear()}${pad(new Date().getMonth() + 1)}${pad(new Date().getDate())}${Math.floor(Math.random() * 900 + 100)}`,
+      orderNo: rentalOrderNo,
       memberId: rentalFormData.memberId,
       memberName: member?.name || "",
       items: rentalFormData.products.map((p) => ({

@@ -35,6 +35,7 @@ export default function Sales() {
   const addSale = useAppStore((s) => s.addSale);
   const updateProduct = useAppStore((s) => s.updateProduct);
   const updateSale = useAppStore((s) => s.updateSale);
+  const addStockRecord = useAppStore((s) => s.addStockRecord);
 
   const [cart, setCart] = useState<{ productId: string; productName: string; price: number; qty: number; discount: number; imageUrl: string }[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -94,6 +95,7 @@ export default function Sales() {
     const pad = (n: number) => n.toString().padStart(2, "0");
     const now = new Date();
     const orderNo = `S${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const createdAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
     const member = members.find((m) => m.id === selectedMember);
     addSale({
       id: `s${Date.now()}`,
@@ -112,11 +114,26 @@ export default function Sales() {
       memberId: selectedMember || undefined,
       status: "paid",
       operator: member ? member.name : "店员小陈",
-      createdAt: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+      createdAt,
     });
     cart.forEach((c) => {
       const p = products.find((x) => x.id === c.productId);
-      if (p) updateProduct(p.id, { stock: Math.max(0, p.stock - c.qty) });
+      if (p) {
+        addStockRecord({
+          id: `stk${Date.now()}-${c.productId}`,
+          type: "sale",
+          productId: c.productId,
+          productName: c.productName,
+          quantity: c.qty,
+          beforeStock: p.stock,
+          afterStock: Math.max(0, p.stock - c.qty),
+          relatedOrderNo: orderNo,
+          operator: member ? member.name : "店员小陈",
+          remark: `销售 · ${payMethod === "cash" ? "现金" : payMethod === "wechat" ? "微信" : payMethod === "alipay" ? "支付宝" : "会员卡"}`,
+          createdAt,
+        });
+        updateProduct(p.id, { stock: Math.max(0, p.stock - c.qty) });
+      }
     });
     setShowPaid({ no: orderNo, amount: Math.round(totalAmount * 100) / 100 });
     setCart([]);
@@ -165,7 +182,22 @@ export default function Sales() {
     if (returnType === "return") {
       foundOrder.items.forEach((it: any) => {
         const p = products.find((x) => x.id === it.productId);
-        if (p) updateProduct(p.id, { stock: p.stock + it.quantity });
+        if (p) {
+          addStockRecord({
+            id: `stk${Date.now()}-${it.productId}`,
+            type: "sale_return",
+            productId: it.productId,
+            productName: it.productName,
+            quantity: it.quantity,
+            beforeStock: p.stock,
+            afterStock: p.stock + it.quantity,
+            relatedOrderNo: foundOrder.orderNo,
+            operator: "店长-李明",
+            remark: `销售退货 · 退款¥${refundAmount} · 原因：${returnReason}`,
+            createdAt: processedAt,
+          });
+          updateProduct(p.id, { stock: p.stock + it.quantity });
+        }
       });
       updateSale(foundOrder.id, {
         status: "returned",

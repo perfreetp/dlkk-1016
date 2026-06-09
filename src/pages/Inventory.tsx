@@ -30,12 +30,18 @@ const tabs = [
   { id: "warning", label: "预警设置", icon: AlertTriangle, desc: "安全库存预警" },
 ];
 
-const typeConfig: Record<string, { label: string; icon: any; cls: string }> = {
-  inbound: { label: "入库", icon: TrendingUp, cls: "bg-emerald-100 text-emerald-700" },
-  transfer: { label: "调拨", icon: ArrowLeftRight, cls: "bg-blue-100 text-blue-700" },
-  stocktake: { label: "盘点", icon: ClipboardList, cls: "bg-purple-100 text-purple-700" },
-  damage: { label: "报损", icon: TrendingDown, cls: "bg-red-100 text-red-700" },
+const typeConfig: Record<string, { label: string; icon: any; cls: string; dir: "+" | "-" | "±" }> = {
+  inbound: { label: "入库", icon: TrendingUp, cls: "bg-emerald-100 text-emerald-700", dir: "+" },
+  transfer: { label: "调拨", icon: ArrowLeftRight, cls: "bg-blue-100 text-blue-700", dir: "±" },
+  stocktake: { label: "盘点", icon: ClipboardList, cls: "bg-purple-100 text-purple-700", dir: "±" },
+  damage: { label: "报损", icon: TrendingDown, cls: "bg-red-100 text-red-700", dir: "-" },
+  rental_out: { label: "租出", icon: Package, cls: "bg-indigo-100 text-indigo-700", dir: "-" },
+  rental_in: { label: "归还", icon: Package, cls: "bg-cyan-100 text-cyan-700", dir: "+" },
+  sale: { label: "销售", icon: Package, cls: "bg-orange-100 text-orange-700", dir: "-" },
+  sale_return: { label: "退货", icon: Package, cls: "bg-pink-100 text-pink-700", dir: "+" },
 };
+
+const storeList = ["海淀店", "朝阳店", "中关村店", "西城店"];
 
 export default function Inventory() {
   const [activeTab, setActiveTab] = useState("inbound");
@@ -46,6 +52,7 @@ export default function Inventory() {
     stocktakeOrders,
     addStockRecord,
     updateProduct,
+    addTransfer,
     updateTransfer,
     addStocktake,
     suppliers,
@@ -60,6 +67,21 @@ export default function Inventory() {
   // 报损
   const [showDamage, setShowDamage] = useState(false);
   const [damageData, setDamageData] = useState({ productId: "", qty: 1, reason: "", remark: "" });
+
+  // 调拨新建
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferForm, setTransferForm] = useState<{
+    fromStore: string;
+    toStore: string;
+    items: { productId: string; productName: string; quantity: number }[];
+  }>({
+    fromStore: "海淀店",
+    toStore: "朝阳店",
+    items: [],
+  });
+
+  // 商品流水明细弹窗
+  const [showProductHistory, setShowProductHistory] = useState<{ id: string; name: string } | null>(null);
 
   // 盘点
   const [showStocktake, setShowStocktake] = useState(false);
@@ -92,10 +114,12 @@ export default function Inventory() {
   };
 
   const submitDamage = () => {
-    if (!damageData.productId) return;
+    if (!damageData.productId) return alert("请选择商品");
     const product = products.find((p) => p.id === damageData.productId);
     if (!product) return;
+    if (product.stock <= 0) return alert(`商品「${product.name}」当前库存为 0，无法报损`);
     const qty = Math.max(1, Math.min(damageData.qty, product.stock));
+    if (qty <= 0) return alert("报损数量无效");
     addStockRecord({
       id: `stk${Date.now()}`,
       type: "damage",
@@ -178,52 +202,120 @@ export default function Inventory() {
   const shipTransfer = (tid: string) => {
     const t = transferOrders.find((x) => x.id === tid);
     if (!t || t.status !== "pending") return;
-    t.items.forEach((it) => {
+
+    const lacks: string[] = [];
+    const shippedItems = t.items.map((it) => {
       const p = products.find((x) => x.id === it.productId);
-      if (p) {
-        const qty = Math.min(it.quantity, p.stock);
+      const stock = p?.stock || 0;
+      const shippedQty = Math.min(it.quantity, stock);
+      if (shippedQty < it.quantity) {
+        lacks.push(`· ${it.productName}：申请 ${it.quantity}，可发 ${shippedQty}，缺 ${it.quantity - shippedQty}`);
+      }
+      return { ...it, shippedQuantity: shippedQty };
+    });
+    if (lacks.length > 0) {
+      alert(`⚠️ 以下商品库存不足，无法继续发货：\n\n${lacks.join("\n")}`);
+      return;
+    }
+    shippedItems.forEach((it) => {
+      const p = products.find((x) => x.id === it.productId);
+      if (p && it.shippedQuantity && it.shippedQuantity > 0) {
         addStockRecord({
           id: `stk${Date.now()}-${it.productId}`,
           type: "transfer",
           productId: it.productId,
           productName: it.productName,
-          quantity: qty,
+          quantity: it.shippedQuantity,
           beforeStock: p.stock,
-          afterStock: p.stock - qty,
+          afterStock: p.stock - it.shippedQuantity,
           relatedOrderNo: t.orderNo,
           operator: "店长-李明",
           remark: `调拨出库至${t.toStore}`,
           createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
         });
-        updateProduct(it.productId, { stock: Math.max(0, p.stock - qty) });
+        updateProduct(it.productId, { stock: Math.max(0, p.stock - it.shippedQuantity) });
       }
     });
-    updateTransfer(tid, { status: "shipped" });
+    updateTransfer(tid, { status: "shipped", items: shippedItems });
   };
 
   const receiveTransfer = (tid: string) => {
     const t = transferOrders.find((x) => x.id === tid);
     if (!t || t.status !== "shipped") return;
     t.items.forEach((it) => {
-      const p = products.find((x) => x.id === it.productId);
-      if (p) {
-        addStockRecord({
-          id: `stk${Date.now()}-${it.productId}`,
-          type: "transfer",
-          productId: it.productId,
-          productName: it.productName,
-          quantity: it.quantity,
-          beforeStock: p.stock,
-          afterStock: p.stock + it.quantity,
-          relatedOrderNo: t.orderNo,
-          operator: "店长-李明",
-          remark: `调拨入库从${t.fromStore}`,
-          createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-        });
-        updateProduct(it.productId, { stock: p.stock + it.quantity });
+      const shippedQty = it.shippedQuantity ?? it.quantity;
+      if (shippedQty > 0) {
+        const p = products.find((x) => x.id === it.productId);
+        if (p) {
+          addStockRecord({
+            id: `stk${Date.now()}-${it.productId}`,
+            type: "transfer",
+            productId: it.productId,
+            productName: it.productName,
+            quantity: shippedQty,
+            beforeStock: p.stock,
+            afterStock: p.stock + shippedQty,
+            relatedOrderNo: t.orderNo,
+            operator: "店长-李明",
+            remark: `调拨入库从${t.fromStore}`,
+            createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+          });
+          updateProduct(it.productId, { stock: p.stock + shippedQty });
+        }
       }
     });
     updateTransfer(tid, { status: "received" });
+  };
+
+  // ===== 调拨新建辅助函数 =====
+  const addTransferItem = () => {
+    const existIds = new Set(transferForm.items.map((x) => x.productId));
+    const candidates = products.filter((p) => !existIds.has(p.id));
+    if (candidates.length === 0) return;
+    const p = candidates[0];
+    setTransferForm({
+      ...transferForm,
+      items: [...transferForm.items, { productId: p.id, productName: p.name, quantity: 1 }],
+    });
+  };
+
+  const removeTransferItem = (pid: string) => {
+    setTransferForm({ ...transferForm, items: transferForm.items.filter((x) => x.productId !== pid) });
+  };
+
+  const changeTransferItem = (pid: string, key: "productId" | "quantity", val: any) => {
+    setTransferForm({
+      ...transferForm,
+      items: transferForm.items.map((x) => {
+        if (x.productId !== pid) return x;
+        if (key === "productId") {
+          const np = products.find((p) => p.id === val);
+          return { productId: val, productName: np?.name || "", quantity: x.quantity };
+        }
+        return { ...x, quantity: Math.max(1, Number(val) || 0) };
+      }),
+    });
+  };
+
+  const submitTransferCreate = () => {
+    if (transferForm.fromStore === transferForm.toStore) return alert("调出门店和调入门店不能相同");
+    if (transferForm.items.length === 0) return alert("请至少添加一件商品");
+    const invalid = transferForm.items.find((x) => !x.productId || x.quantity <= 0);
+    if (invalid) return alert("存在无效的商品行，请检查");
+    const date = new Date();
+    const orderNo = `TR${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}${String(Math.floor(Math.random() * 900) + 100)}`;
+    addTransfer({
+      id: `tr${Date.now()}`,
+      orderNo,
+      fromStore: transferForm.fromStore,
+      toStore: transferForm.toStore,
+      items: transferForm.items,
+      status: "pending",
+      operator: "店长-李明",
+      createdAt: date.toISOString().slice(0, 16).replace("T", " "),
+    });
+    setShowTransfer(false);
+    setTransferForm({ fromStore: "海淀店", toStore: "朝阳店", items: [] });
   };
 
   const active = tabs.find((t) => t.id === activeTab)!;
@@ -309,19 +401,21 @@ export default function Inventory() {
               <p className="text-xs text-text-500">{active.desc}</p>
             </div>
           </div>
-          {(activeTab === "inbound" || activeTab === "damage" || activeTab === "stocktake") && (
+          {(activeTab === "inbound" || activeTab === "damage" || activeTab === "stocktake" || activeTab === "transfer") && (
             <button
               className="btn-primary flex items-center gap-1.5"
               onClick={() => {
                 if (activeTab === "inbound") setShowInbound(true);
                 if (activeTab === "damage") setShowDamage(true);
                 if (activeTab === "stocktake") setShowStocktake(true);
+                if (activeTab === "transfer") setShowTransfer(true);
               }}
             >
               <Plus className="w-4 h-4" />
               {activeTab === "inbound" && "新建入库"}
               {activeTab === "damage" && "报损登记"}
               {activeTab === "stocktake" && "创建盘点"}
+              {activeTab === "transfer" && "新建调拨"}
             </button>
           )}
         </div>
@@ -348,7 +442,10 @@ export default function Inventory() {
                   <tr key={r.id}>
                     <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
                     <td><span className={cn("badge", typeConfig[r.type].cls)}>{typeConfig[r.type].label}</span></td>
-                    <td className="font-medium text-text-900">{r.productName}</td>
+                    <td
+                      className="font-medium text-text-900 cursor-pointer hover:text-primary-600 hover:underline"
+                      onClick={() => setShowProductHistory({ id: r.productId, name: r.productName })}
+                    >{r.productName}</td>
                     <td className="text-emerald-600 font-bold">+{r.quantity}</td>
                     <td>{r.beforeStock}</td>
                     <td>{r.afterStock}</td>
@@ -408,9 +505,21 @@ export default function Inventory() {
                 </div>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {t.items.map((it) => (
-                    <span key={it.productId} className="px-3 py-1.5 bg-background-50 border border-border-100 rounded-lg text-xs text-text-700">
+                    <span
+                      key={it.productId}
+                      className="px-3 py-1.5 bg-background-50 border border-border-100 rounded-lg text-xs text-text-700 cursor-pointer hover:border-primary-300 hover:bg-primary-50"
+                      onClick={() => setShowProductHistory({ id: it.productId, name: it.productName })}
+                      title="点击查看商品流水"
+                    >
                       <Package className="w-3 h-3 inline mr-1" />
-                      {it.productName} × <span className="font-semibold text-primary-600">{it.quantity}</span>
+                      {it.productName} × <span className="font-semibold text-primary-600">
+                        {it.shippedQuantity != null ? `${it.shippedQuantity}/${it.quantity}` : it.quantity}
+                      </span>
+                      {it.shippedQuantity != null && t.status !== "pending" && (
+                        <span className="ml-1 text-text-400 text-[10px]">
+                          {t.status === "shipped" ? "已发" : "实发"}
+                        </span>
+                      )}
                     </span>
                   ))}
                 </div>
@@ -487,7 +596,10 @@ export default function Inventory() {
                       <tbody>
                         {s.items.map((it) => (
                           <tr key={it.productId}>
-                            <td className="font-medium text-text-800">{it.productName}</td>
+                            <td
+                              className="font-medium text-text-800 cursor-pointer hover:text-primary-600 hover:underline"
+                              onClick={() => setShowProductHistory({ id: it.productId, name: it.productName })}
+                            >{it.productName}</td>
                             <td className="text-right text-text-600">{it.systemStock}</td>
                             <td className="text-right font-medium text-text-900">{it.actualStock}</td>
                             <td className={cn(
@@ -527,7 +639,10 @@ export default function Inventory() {
                 {stockRecords.filter((r) => r.type === "damage").map((r) => (
                   <tr key={r.id}>
                     <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
-                    <td className="font-medium text-text-900">{r.productName}</td>
+                    <td
+                      className="font-medium text-text-900 cursor-pointer hover:text-primary-600 hover:underline"
+                      onClick={() => setShowProductHistory({ id: r.productId, name: r.productName })}
+                    >{r.productName}</td>
                     <td className="text-danger-600 font-bold">-{r.quantity}</td>
                     <td>{r.beforeStock}</td>
                     <td>{r.afterStock}</td>
@@ -754,6 +869,220 @@ export default function Inventory() {
             <button className="btn-outline" onClick={() => setShowStocktake(false)}>取消</button>
             <button className="btn-outline" onClick={() => submitStocktake(false)}>保存草稿</button>
             <button className="btn-primary" onClick={() => submitStocktake(true)}>确认盘点(同步库存)</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* ============ 新建调拨弹窗 ============ */}
+      {showTransfer && (
+        <Modal title="新建调拨单" onClose={() => setShowTransfer(false)} size="lg">
+          <ModalBody>
+            <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="调出门店 *">
+                  <select
+                    className="select"
+                    value={transferForm.fromStore}
+                    onChange={(e) => setTransferForm({ ...transferForm, fromStore: e.target.value })}
+                  >
+                    {storeList.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+                <Field label="调入门店 *">
+                  <select
+                    className="select"
+                    value={transferForm.toStore}
+                    onChange={(e) => setTransferForm({ ...transferForm, toStore: e.target.value })}
+                  >
+                    {storeList.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+              </div>
+              {transferForm.fromStore === transferForm.toStore && (
+                <div className="text-xs text-danger bg-danger-50 rounded-lg px-3 py-2">
+                  ⚠️ 调出门店与调入门店不能相同
+                </div>
+              )}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="label mb-0">调拨商品明细 *</label>
+                  <button className="btn-outline btn-sm flex items-center gap-1" onClick={addTransferItem}>
+                    <Plus className="w-3.5 h-3.5" />添加商品
+                  </button>
+                </div>
+                <div className="rounded-xl border border-border-100 max-h-72 overflow-auto">
+                  <table className="table text-sm">
+                    <thead className="sticky top-0 bg-background-50">
+                      <tr>
+                        <th>商品名称</th>
+                        <th className="w-28 text-right">当前库存</th>
+                        <th className="w-32 text-right">申请数量</th>
+                        <th className="w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferForm.items.length === 0 && (
+                        <tr><td colSpan={4} className="text-center py-8 text-text-400 text-sm">点击右上角「添加商品」选择需调拨的商品</td></tr>
+                      )}
+                      {transferForm.items.map((it) => {
+                        const p = products.find((x) => x.id === it.productId);
+                        return (
+                          <tr key={it.productId}>
+                            <td>
+                              <select
+                                className="select !py-1.5 !text-sm"
+                                value={it.productId}
+                                onChange={(e) => changeTransferItem(it.productId, "productId", e.target.value)}
+                              >
+                                {products.map((pr) => (
+                                  <option key={pr.id} value={pr.id}>{pr.name}（库存 {pr.stock}）</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="text-right font-mono text-text-600">{p?.stock ?? 0}</td>
+                            <td className="text-right w-32">
+                              <input
+                                type="number"
+                                min="1"
+                                max={p?.stock || 9999}
+                                className="input !py-1.5 !text-sm !text-right"
+                                value={it.quantity}
+                                onChange={(e) => changeTransferItem(it.productId, "quantity", e.target.value)}
+                              />
+                            </td>
+                            <td className="text-center">
+                              <button
+                                className="p-1.5 rounded-lg hover:bg-danger-50 text-text-400 hover:text-danger-600"
+                                onClick={() => removeTransferItem(it.productId)}
+                              ><X className="w-4 h-4" /></button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {transferForm.items.length > 0 && (
+                  <div className="mt-3 text-xs text-text-500">
+                    共 {transferForm.items.length} 件商品，申请调拨合计 
+                    <span className="text-text-900 font-semibold ml-1">
+                      {transferForm.items.reduce((s, x) => s + x.quantity, 0)} 件
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn-outline" onClick={() => setShowTransfer(false)}>取消</button>
+            <button
+              className={cn("btn-primary",
+                (transferForm.fromStore === transferForm.toStore || transferForm.items.length === 0) && "opacity-50 cursor-not-allowed"
+              )}
+              onClick={submitTransferCreate}
+            >创建调拨单（待发货）</button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {/* ============ 商品流水明细弹窗 ============ */}
+      {showProductHistory && (
+        <Modal
+          title={`📋 「${showProductHistory.name}」库存流水明细`}
+          onClose={() => setShowProductHistory(null)}
+          size="xl"
+        >
+          <ModalBody>
+            {(() => {
+              const p = products.find((x) => x.id === showProductHistory.id);
+              const records = stockRecords
+                .filter((r) => r.productId === showProductHistory.id)
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              const diffQty = records.length ? records[0].afterStock : p?.stock ?? 0;
+              return (
+                <div className="space-y-4">
+                  {p && (
+                    <div className="p-4 rounded-xl bg-gradient-to-r from-primary-50 to-secondary-50 border border-primary-200 flex items-center gap-4">
+                      <img src={p.imageUrl} className="w-16 h-16 rounded-lg object-cover border border-white" />
+                      <div className="flex-1">
+                        <div className="font-bold text-text-900">{p.name}</div>
+                        <div className="text-xs text-text-500 mt-0.5">{p.categoryName} · {p.ageRange} · 条码 {p.barcode}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-text-500">当前库存</div>
+                        <div className="text-2xl font-bold text-primary-600">{p.stock}</div>
+                        <div className="text-[10px] text-text-400 mt-0.5">安全库存 {p.safetyStock}</div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="rounded-xl border border-border-100 max-h-[52vh] overflow-auto">
+                    <table className="table text-sm">
+                      <thead className="sticky top-0 bg-white shadow-sm z-10">
+                        <tr>
+                          <th>单号</th>
+                          <th>类型</th>
+                          <th>变动</th>
+                          <th className="text-right">变动前</th>
+                          <th className="text-right">变动后</th>
+                          <th>操作人</th>
+                          <th className="w-56">备注</th>
+                          <th className="text-right">时间</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {records.length === 0 && (
+                          <tr><td colSpan={8} className="text-center py-12 text-text-400">该商品暂无库存流水记录</td></tr>
+                        )}
+                        {records.map((r) => {
+                          const cfg = typeConfig[r.type] || typeConfig.inbound;
+                          const CfgIcon = cfg.icon;
+                          const dir = cfg.dir;
+                          const qtyColor = dir === "+" ? "text-emerald-600" : dir === "-" ? "text-danger-600" : "text-secondary-600";
+                          const qtySign = dir === "+" ? "+" : dir === "-" ? "-" : r.type === "transfer" ? (r.remark?.includes("入库") ? "+" : "-") : r.type === "stocktake" ? (r.afterStock > r.beforeStock ? "+" : r.afterStock < r.beforeStock ? "-" : "") : "";
+                          return (
+                            <tr key={r.id} className="hover:bg-background-50">
+                              <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
+                              <td>
+                                <span className={cn("badge", cfg.cls)}>
+                                  <CfgIcon className="w-3 h-3 inline mr-1" />{cfg.label}
+                                </span>
+                              </td>
+                              <td className={cn("font-bold", qtyColor)}>
+                                {qtySign}{r.quantity}
+                              </td>
+                              <td className="text-right font-mono">{r.beforeStock}</td>
+                              <td className="text-right font-mono">{r.afterStock}</td>
+                              <td>{r.operator}</td>
+                              <td className="text-xs text-text-500 max-w-56 truncate" title={r.remark}>
+                                {r.remark || "—"}
+                              </td>
+                              <td className="text-right text-xs text-text-400">{r.createdAt}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {records.length > 0 && (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {Object.entries(typeConfig).map(([k, v]) => {
+                        const cnt = records.filter((r) => r.type === k).length;
+                        if (cnt === 0) return null;
+                        const VIc = v.icon;
+                        return (
+                          <span key={k} className={cn("px-2.5 py-1 rounded-lg", v.cls)}>
+                            <VIc className="w-3 h-3 inline mr-1" />{v.label} {cnt}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </ModalBody>
+          <ModalFooter>
+            <button className="btn-primary" onClick={() => setShowProductHistory(null)}>关闭</button>
           </ModalFooter>
         </Modal>
       )}
