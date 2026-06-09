@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
+
+:root {
+  font-family: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background-color: #f5f7fa;
+  color: #1f2329;
+  min-height: 100vh;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 focus:ring-primary-300 shadow-md hover:shadow-lg;
+  }
+
+  .btn-secondary {
+    @apply btn bg-secondary-500 text-white hover:bg-secondary-600 focus:ring-secondary-300;
+  }
+
+  .btn-outline {
+    @apply btn border-2 border-border bg-white text-text-primary hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-text-secondary hover:bg-gray-100 hover:text-text-primary;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger text-white hover:bg-red-600 focus:ring-red-300;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .card {
+    @apply bg-surface rounded-2xl shadow-card p-6 transition-shadow duration-200 hover:shadow-card-hover;
+  }
+
+  .card-sm {
+    @apply bg-surface rounded-xl shadow-card p-4;
+  }
+
+  .input {
+    @apply w-full px-4 py-2.5 rounded-xl border-2 border-border bg-white text-sm text-text-primary placeholder-text-tertiary transition-all duration-200 focus:outline-none focus:border-primary-400 focus:ring-4 focus:ring-primary-50/60;
+  }
+
+  .input-sm {
+    @apply px-3 py-2 text-xs rounded-lg;
+  }
+
+  .select {
+    @apply w-full px-4 py-2.5 rounded-xl border-2 border-border bg-white text-sm text-text-primary transition-all duration-200 focus:outline-none focus:border-primary-400 focus:ring-4 focus:ring-primary-50/60 cursor-pointer;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-text-primary mb-1.5;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .table-wrap {
+    @apply w-full overflow-x-auto rounded-xl border border-border;
+  }
+
+  .table {
+    @apply w-full text-sm;
+  }
+
+  .table thead {
+    @apply bg-gray-50 text-text-secondary;
+  }
+
+  .table th {
+    @apply px-4 py-3 text-left font-medium whitespace-nowrap;
+  }
+
+  .table td {
+    @apply px-4 py-3 border-t border-border text-text-primary whitespace-nowrap;
+  }
+
+  .table tbody tr {
+    @apply hover:bg-gray-50 transition-colors;
+  }
+
+  .tab {
+    @apply px-4 py-2.5 text-sm font-medium rounded-xl cursor-pointer transition-all duration-200;
+  }
+
+  .tab-active {
+    @apply bg-primary-500 text-white shadow-md;
+  }
+
+  .tab-inactive {
+    @apply text-text-secondary hover:bg-gray-100;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium cursor-pointer transition-all duration-200;
+  }
+
+  .sidebar-item-active {
+    @apply bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md;
+  }
+
+  .sidebar-item-inactive {
+    @apply text-text-secondary hover:bg-gray-100 hover:text-text-primary;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af;
+  }
+}
