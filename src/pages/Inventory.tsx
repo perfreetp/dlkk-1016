@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "@/store";
 import {
   PackagePlus,
@@ -57,9 +57,36 @@ export default function Inventory() {
     addStocktake,
     suppliers,
     openProductHistory,
+    orderFocus,
+    setOrderFocus,
   } = useAppStore();
 
   const lowStockProducts = products.filter((p) => p.stock < p.safetyStock);
+  const [highlight, setHighlight] = useState<{ id: string; type: "transfer" | "stocktake" | "inbound" | "damage" } | null>(null);
+
+  useEffect(() => {
+    if (orderFocus?.page === "inventory" && orderFocus.orderNo) {
+      const no = orderFocus.orderNo;
+      let targetType: typeof highlight = null;
+      let targetTab = activeTab;
+      if (no.startsWith("TR")) { targetType = { id: no, type: "transfer" }; targetTab = "transfer"; }
+      else if (no.startsWith("SK")) { targetType = { id: no, type: "stocktake" }; targetTab = "stocktake"; }
+      else if (no.startsWith("IN")) { targetType = { id: no, type: "inbound" }; targetTab = "inbound"; }
+      else if (no.startsWith("DM")) { targetType = { id: no, type: "damage" }; targetTab = "damage"; }
+      else { targetType = { id: no, type: orderFocus.tab === "damage" ? "damage" : orderFocus.tab === "stocktake" ? "stocktake" : orderFocus.tab === "transfer" ? "transfer" : "inbound" }; targetTab = orderFocus.tab || "inbound" as any; }
+
+      setActiveTab(targetTab);
+      setTimeout(() => {
+        const el = document.getElementById(`inv-${targetType!.type}-${no}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setHighlight(targetType!);
+          setTimeout(() => setHighlight(null), 4200);
+          setOrderFocus(null);
+        }
+      }, 420);
+    }
+  }, [orderFocus]);
 
   // 入库
   const [showInbound, setShowInbound] = useState(false);
@@ -437,7 +464,14 @@ export default function Inventory() {
               </thead>
               <tbody>
                 {stockRecords.filter((r) => r.type === "inbound").map((r) => (
-                  <tr key={r.id}>
+                  <tr
+                    key={r.id}
+                    id={`inv-inbound-${r.relatedOrderNo}`}
+                    className={cn(
+                      highlight?.type === "inbound" && highlight.id === r.relatedOrderNo &&
+                        "bg-yellow-100/70 ring-2 ring-yellow-400 ring-offset-1 transition-all"
+                    )}
+                  >
                     <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
                     <td><span className={cn("badge", typeConfig[r.type].cls)}>{typeConfig[r.type].label}</span></td>
                     <td
@@ -465,11 +499,16 @@ export default function Inventory() {
           <div className="space-y-3">
             {transferOrders.length === 0 && <div className="text-center py-10 text-text-400">暂无调拨单</div>}
             {transferOrders.map((t) => (
-              <div key={t.id} className={cn(
+              <div
+                key={t.id}
+                id={`inv-transfer-${t.orderNo}`}
+                className={cn(
                 "p-5 rounded-xl border transition-all bg-white",
                 t.status === "received" ? "border-success-200 bg-success-50/30" :
                 t.status === "shipped" ? "border-secondary-200 bg-secondary-50/30" :
-                "border-warning-200 bg-warning-50/30"
+                "border-warning-200 bg-warning-50/30",
+                highlight?.type === "transfer" && highlight.id === t.orderNo &&
+                  "ring-2 ring-yellow-400 ring-offset-2 shadow-lg shadow-yellow-200/40"
               )}>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3 flex-wrap">
@@ -554,7 +593,15 @@ export default function Inventory() {
               const diff = s.items.reduce((sum, it) => sum + Math.abs(it.diff), 0);
               const profit = s.items.reduce((sum, it) => sum + it.diff, 0);
               return (
-                <div key={s.id} className="p-5 rounded-xl border-2 border-border-100 bg-white transition-all hover:border-primary-200">
+                <div
+                  key={s.id}
+                  id={`inv-stocktake-${s.orderNo}`}
+                  className={cn(
+                    "p-5 rounded-xl border-2 border-border-100 bg-white transition-all hover:border-primary-200",
+                    highlight?.type === "stocktake" && highlight.id === s.orderNo &&
+                      "ring-2 ring-yellow-400 ring-offset-1 shadow-lg shadow-yellow-200/40 bg-yellow-100/50"
+                  )}
+                >
                   <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -635,7 +682,14 @@ export default function Inventory() {
               </thead>
               <tbody>
                 {stockRecords.filter((r) => r.type === "damage").map((r) => (
-                  <tr key={r.id}>
+                  <tr
+                    key={r.id}
+                    id={`inv-damage-${r.relatedOrderNo}`}
+                    className={cn(
+                      highlight?.type === "damage" && highlight.id === r.relatedOrderNo &&
+                        "bg-yellow-100/70 ring-2 ring-yellow-400 ring-offset-1 transition-all"
+                    )}
+                  >
                     <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
                     <td
                       className="font-medium text-text-900 cursor-pointer hover:text-primary-600 hover:underline"

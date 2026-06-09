@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "@/store";
 import {
   Users,
@@ -51,11 +51,32 @@ export default function Rental() {
     addRental,
     updateProduct,
     addStockRecord,
+    orderFocus,
+    setOrderFocus,
   } = useAppStore();
 
   const [activeMember, setActiveMember] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState("");
   const [rentalTab, setRentalTab] = useState<"active" | "all">("active");
+  const [highlightRentalNo, setHighlightRentalNo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (orderFocus?.page === "rental" && orderFocus.orderNo) {
+      setActiveMember(null);
+      setRentalTab("all");
+      const targetNo = orderFocus.orderNo;
+      setTimeout(() => {
+        const el = document.getElementById(`rental-card-${targetNo}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setHighlightRentalNo(targetNo);
+          setTimeout(() => setHighlightRentalNo(null), 4000);
+          setOrderFocus(null);
+        }
+      }, 400);
+    }
+  }, [orderFocus]);
+
   const [showMemberForm, setShowMemberForm] = useState<{ mode: "add" | "edit"; data?: any } | null>(null);
   const [showRentalForm, setShowRentalForm] = useState(false);
   const [showReturnConfirm, setShowReturnConfirm] = useState<any>(null);
@@ -287,9 +308,12 @@ export default function Rental() {
     return (
       <div
         key={r.id}
+        id={`rental-card-${r.orderNo}`}
         className={cn(
           "p-4 rounded-xl border-2 transition-all bg-white",
-          isOverdue ? "border-danger-200 bg-danger-50/30" : "border-border-100 hover:border-primary-200"
+          isOverdue ? "border-danger-200 bg-danger-50/30" : "border-border-100 hover:border-primary-200",
+          highlightRentalNo === r.orderNo &&
+            "bg-yellow-100/70 ring-2 ring-yellow-400 ring-offset-1 shadow-lg shadow-yellow-200/40"
         )}
       >
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">

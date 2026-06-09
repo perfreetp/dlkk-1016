@@ -20,7 +20,7 @@ import {
   members as initialMembers,
   rentalOrders as initialRentals,
   saleOrders as initialSales,
-  stockRecords as initialStockRecords,
+  allStockRecords as initialStockRecords,
   maintenanceOrders as initialMaintenance,
   storeInfo as initialStore,
   employees as initialEmployees,

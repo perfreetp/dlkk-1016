@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import type { StockRecord } from "@/types";
 import { useAppStore } from "../store";
 import {
   BarChart,
@@ -41,10 +42,12 @@ import {
   Building,
   BadgeDollarSign,
   RefreshCw,
+  AlertTriangle,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type ReportTab = "hot" | "turnover" | "profit" | "stock_daily";
+type ReportTab = "hot" | "turnover" | "profit" | "stock_daily" | "stock_check";
 type SettingsTab = "store" | "employee" | "supplier" | "tag";
 
 const COLORS = ["#FF6B35", "#1A73E8", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#06B6D4"];
@@ -187,6 +190,21 @@ export default function Reports() {
   const [dailyDate, setDailyDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [dailyStore, setDailyStore] = useState<string>("全部门店");
   const [dailyCategory, setDailyCategory] = useState<string>("全部");
+  const [selectedDailyType, setSelectedDailyType] = useState<string | null>(null);
+  const orderFocus = useAppStore((s) => s.orderFocus);
+  const setOrderFocus = useAppStore((s) => s.setOrderFocus);
+
+  const jumpFromReport = (orderNo: string, type: string) => {
+    let page: "inventory" | "sales" | "rental" = "inventory";
+    let tab: string | undefined;
+    if (type === "sale" || type === "sale_return") { page = "sales"; }
+    else if (type === "rental_out" || type === "rental_in") { page = "rental"; }
+    else if (type.startsWith("transfer")) { tab = "transfer"; }
+    else if (type === "inbound") { tab = "inbound"; }
+    else if (type === "damage") { tab = "damage"; }
+    else if (type === "stocktake") { tab = "stocktake"; }
+    setOrderFocus({ orderNo, page, tab });
+  };
 
   const dailyTypeConfig: Record<
     string,
@@ -265,8 +283,76 @@ export default function Reports() {
     const netQty = totalIn - totalOut;
     const totalValue = rows.reduce((s, r) => s + r.amount, 0);
 
-    return { rows, totalIn, totalOut, netQty, totalValue, count: list.length };
+    return { rows, totalIn, totalOut, netQty, totalValue, count: list.length, list };
   }, [stockRecords, dailyDate, dailyStore, dailyCategory, products, categories, transferOrders]);
+
+  // ============ 库存异常核对 ============
+  const rentalOrders = useAppStore((s) => s.rentalOrders);
+  const stockCheckData = useMemo(() => {
+    const recordsByProduct: Record<string, StockRecord[]> = {};
+    stockRecords.forEach((r) => {
+      if (!recordsByProduct[r.productId]) recordsByProduct[r.productId] = [];
+      recordsByProduct[r.productId].push(r);
+    });
+
+    // 租借占用：active/overdue 的在租数量
+    const rentalOccupied: Record<string, number> = {};
+    rentalOrders.forEach((r) => {
+      if (r.status !== "active" && r.status !== "overdue") return;
+      r.items.forEach((it) => {
+        rentalOccupied[it.productId] = (rentalOccupied[it.productId] || 0) + it.quantity;
+      });
+    });
+
+    const data = products.map((p) => {
+      const records = recordsByProduct[p.id] || [];
+      let plusQty = 0, minusQty = 0;
+      records.forEach((r) => {
+        const isPlus = r.type === "inbound" || r.type === "rental_in" || r.type === "sale_return" ||
+          (r.type === "transfer" && r.remark?.includes("入库")) ||
+          (r.type === "stocktake" && r.afterStock > r.beforeStock);
+        const isMinus = r.type === "sale" || r.type === "rental_out" || r.type === "damage" ||
+          (r.type === "transfer" && !r.remark?.includes("入库")) ||
+          (r.type === "stocktake" && r.afterStock < r.beforeStock);
+        if (isPlus) plusQty += r.quantity;
+        if (isMinus) minusQty += r.quantity;
+      });
+      const calcStock = p.stock + minusQty - plusQty;
+      const occupied = rentalOccupied[p.id] || 0;
+      const diff = p.stock - calcStock;
+      const isMismatch = diff !== 0;
+      const availableForRent = Math.max(0, p.stock - occupied);
+
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        category: categories.find((c) => c.id === p.categoryId)?.name || "-",
+        currentStock: p.stock,
+        calcStock,
+        plusQty,
+        minusQty,
+        occupied,
+        availableForRent,
+        diff,
+        isMismatch,
+      };
+    });
+
+    const mismatchCount = data.filter((d) => d.isMismatch).length;
+    const occupiedTotal = data.reduce((s, d) => s + d.occupied, 0);
+    const totalAvailableForRent = data.reduce((s, d) => s + d.availableForRent, 0);
+
+    return {
+      items: data,
+      mismatchItems: data.filter((d) => d.isMismatch),
+      mismatchCount,
+      totalItems: data.length,
+      occupiedTotal,
+      totalAvailableForRent,
+      diffQty: mismatchCount > 0 ? data.reduce((s, d) => s + Math.abs(d.diff), 0) : 0,
+    };
+  }, [products, stockRecords, rentalOrders, categories]);
 
   const openModal = (type: string, data?: any) => {
     setFormState(data ? { ...data } : {});
@@ -351,6 +437,7 @@ export default function Reports() {
               { key: "turnover", label: "周转分析", icon: RefreshCw },
               { key: "profit", label: "利润分析", icon: DollarSign },
               { key: "stock_daily", label: "库存异动日报", icon: Package },
+              { key: "stock_check", label: "库存异常核对", icon: AlertTriangle },
             ].map((t) => (
               <button
                 key={t.key}
@@ -364,7 +451,8 @@ export default function Reports() {
           </div>
           <div className="text-xs text-text-500 flex items-center gap-1">
             <Calendar className="w-3.5 h-3.5" />
-            数据周期：{reportTab === "stock_daily" ? `当日 (${dailyDate})` : "近 6 个月"}
+            数据周期：
+            {reportTab === "stock_daily" ? `当日 (${dailyDate})` : reportTab === "stock_check" ? "实时核对" : "近 6 个月"}
           </div>
         </div>
 
@@ -663,8 +751,42 @@ export default function Reports() {
                     ))}
                   </select>
                 </div>
-                <div className="ml-auto text-xs text-text-500">
-                  当日共 <span className="font-semibold text-text-900">{dailySummary.count}</span> 条异动记录
+              </div>
+              <div className="flex items-end gap-4 flex-wrap mb-5">
+                <div className="ml-auto flex items-center gap-3 flex-wrap">
+                  <button
+                    className="btn-outline flex items-center gap-1.5 !py-1.5 !text-sm"
+                    onClick={() => {
+                      if (dailySummary.list.length === 0) return alert("当日无记录可导出");
+                      const header = ["时间", "异动类型", "商品", "数量", "单价依据", "金额(估)", "来源单号", "操作员", "备注"];
+                      const rows = dailySummary.list.map((r: any) => {
+                        const type = r.type === "transfer" ? (r.remark?.includes("入库") ? "调拨入库" : "调拨出库") : dailyTypeConfig[r.type]?.label || r.type;
+                        const qtySign = r.type === "sale" || r.type === "rental_out" || r.type === "damage" ? -1 : r.type === "stocktake" ? (r.afterStock > r.beforeStock ? 1 : -1) : 1;
+                        const p = products.find((x) => x.id === r.productId);
+                        let amt = 0;
+                        if (r.type === "sale" || r.type === "sale_return") amt = r.quantity * (p?.salePrice || 0);
+                        else if (r.type === "rental_out") amt = r.quantity * (p?.rentalPrice || 0) * 3;
+                        else if (r.type === "rental_in") amt = 0;
+                        else amt = r.quantity * (p?.costPrice || 0);
+                        return [r.createdAt, type, r.productName, qtySign * r.quantity, p?.costPrice || 0, amt, r.relatedOrderNo || "", r.operator || "", (r.remark || "").replace(/[\r\n,]/g, " ")];
+                      });
+                      const csv = [header, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+                      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `库存异动日报_${dailyDate}_${dailyStore}_${dailyCategory}.csv`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <Download className="w-4 h-4" />导出当日CSV
+                  </button>
+                  <div className="text-xs text-text-500">
+                    当日共 <span className="font-semibold text-text-900">{dailySummary.count}</span> 条异动记录
+                  </div>
                 </div>
               </div>
 
@@ -690,10 +812,18 @@ export default function Reports() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="rounded-xl border border-border-100 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-border-100 bg-background-50 font-semibold text-text-900 text-sm">
-                    各类型异动明细
+                  <div className="px-4 py-3 border-b border-border-100 bg-background-50 font-semibold text-text-900 text-sm flex items-center justify-between">
+                    <div>各类型异动明细</div>
+                    {selectedDailyType && (
+                      <button
+                        className="text-xs text-text-500 hover:text-primary-600 flex items-center gap-1"
+                        onClick={() => setSelectedDailyType(null)}
+                      >
+                        <X className="w-3.5 h-3.5" /> 收起
+                      </button>
+                    )}
                   </div>
-                  <div className="max-h-80 overflow-auto scrollbar-thin">
+                  <div className="overflow-auto scrollbar-thin">
                     <table className="table text-sm">
                       <thead className="sticky top-0 bg-white shadow-sm z-10">
                         <tr>
@@ -711,10 +841,26 @@ export default function Reports() {
                           </tr>
                         )}
                         {dailySummary.rows.map((row) => (
-                          <tr key={row.type} className="hover:bg-background-50">
+                          <tr
+                            key={row.type}
+                            className={cn(
+                              "hover:bg-primary-50 cursor-pointer transition-all",
+                              selectedDailyType === row.type && "bg-primary-50/60 ring-1 ring-inset ring-primary-200"
+                            )}
+                            onClick={() =>
+                              setSelectedDailyType(selectedDailyType === row.type ? null : row.type)
+                            }
+                          >
                             <td>
                               <span className={cn("badge", row.cfg.cls, "border")}>
                                 {row.cfg.label}
+                              </span>
+                              <span className="ml-2 text-[11px] text-text-400">
+                                {dailySummary.list.filter((r: any) => {
+                                  let k = r.type;
+                                  if (r.type === "transfer") k = r.remark?.includes("入库") ? "transfer_in" : "transfer_out";
+                                  return k === row.type;
+                                }).length} 条单据
                               </span>
                             </td>
                             <td className={cn(
@@ -731,6 +877,65 @@ export default function Reports() {
                       </tbody>
                     </table>
                   </div>
+
+                  {selectedDailyType && (
+                    <div className="border-t border-border-100 bg-background-50/40">
+                      <div className="px-4 py-2 text-xs font-semibold text-text-700 flex items-center gap-2">
+                        <span className={cn("badge", dailyTypeConfig[selectedDailyType]?.cls, "border")}>
+                          {dailyTypeConfig[selectedDailyType]?.label} 明细单据
+                        </span>
+                        <span className="text-text-400">
+                          共 {dailySummary.list.filter((r: any) => {
+                            let k = r.type;
+                            if (r.type === "transfer") k = r.remark?.includes("入库") ? "transfer_in" : "transfer_out";
+                            return k === selectedDailyType;
+                          }).length} 条
+                        </span>
+                      </div>
+                      <div className="max-h-64 overflow-auto scrollbar-thin">
+                        {dailySummary.list
+                          .filter((r: any) => {
+                            let k = r.type;
+                            if (r.type === "transfer") k = r.remark?.includes("入库") ? "transfer_in" : "transfer_out";
+                            return k === selectedDailyType;
+                          })
+                          .map((r: any) => (
+                            <div
+                              key={r.id}
+                              className="px-4 py-2.5 border-b border-border-100 hover:bg-white transition-all flex items-center gap-3 flex-wrap"
+                            >
+                              <div className="text-xs text-text-500 min-w-[120px]">{r.createdAt}</div>
+                              <div className="font-medium text-text-900 text-sm flex-1 min-w-[180px]">
+                                {r.productName}
+                                <span className="ml-2 text-text-400 font-normal">×{r.quantity}</span>
+                              </div>
+                              <div className="text-xs text-text-500">{r.operator}</div>
+                              {r.relatedOrderNo && (
+                                <button
+                                  className={cn(
+                                    "text-xs px-2 py-1 rounded-md border font-mono transition-all",
+                                    (selectedDailyType === "sale" || selectedDailyType === "sale_return") &&
+                                      "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100",
+                                    (selectedDailyType === "rental_out" || selectedDailyType === "rental_in") &&
+                                      "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100",
+                                    (selectedDailyType.startsWith("transfer") || selectedDailyType === "inbound" || selectedDailyType === "damage" || selectedDailyType === "stocktake") &&
+                                      "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                                  )}
+                                  onClick={() => jumpFromReport(r.relatedOrderNo, selectedDailyType)}
+                                >
+                                  {r.relatedOrderNo} →
+                                </button>
+                              )}
+                              {r.remark && (
+                                <div className="text-[11px] text-text-400 max-w-[140px] truncate" title={r.remark}>
+                                  {r.remark}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-xl border border-border-100 overflow-hidden">
@@ -785,6 +990,156 @@ export default function Reports() {
                       </div>
                     )}
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ====== 库存异常核对 ====== */}
+          {reportTab === "stock_check" && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-4 gap-4">
+                {[
+                  { label: "商品总数", val: stockCheckData.totalItems, sub: "SKU", cls: "from-primary-500 to-blue-500" },
+                  { label: "异常商品", val: stockCheckData.mismatchCount, sub: "不一致", cls: stockCheckData.mismatchCount > 0 ? "from-danger to-danger-500" : "from-success-500 to-teal-500" },
+                  { label: "差异件数", val: stockCheckData.diffQty, sub: "总差值", cls: stockCheckData.diffQty > 0 ? "from-warning to-orange-500" : "from-success-500 to-emerald-500" },
+                  { label: "可租可用", val: stockCheckData.totalAvailableForRent, sub: `占用中 ${stockCheckData.occupiedTotal} 件`, cls: "from-secondary-500 to-indigo-500" },
+                ].map((k, i) => (
+                  <div key={i} className="card-sm p-4 flex items-center gap-4">
+                    <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br text-white flex items-center justify-center shadow-sm", k.cls)}>
+                      <AlertTriangle className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-text-900">{k.val}</div>
+                      <div className="text-xs text-text-500">{k.label} · {k.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {stockCheckData.mismatchCount > 0 && (
+                <div className="rounded-xl border-2 border-danger-200 bg-danger-50/50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-danger-600" />
+                    <div className="font-semibold text-danger-800">发现 {stockCheckData.mismatchCount} 个商品账实不符！</div>
+                  </div>
+                  <p className="text-xs text-danger-700/80">
+                    下方表格中「当前库存」列标红的商品，实际库存与按流水倒推的库存不一致，建议立即盘点或核查是否有漏记单据
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-border-100 overflow-hidden">
+                <div className="px-4 py-3 border-b border-border-100 bg-background-50 flex items-center justify-between flex-wrap gap-3">
+                  <div className="font-semibold text-text-900 text-sm">库存核对表（{stockCheckData.items.length} SKU）</div>
+                  <div className="flex items-center gap-3 text-xs">
+                    {stockCheckData.mismatchCount > 0 && (
+                      <span className="text-danger-600 font-medium">⚠️ 标红 = 账实不符</span>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-[520px] overflow-auto scrollbar-thin">
+                  <table className="table text-sm">
+                    <thead className="sticky top-0 bg-white shadow-sm z-10">
+                      <tr>
+                        <th className="whitespace-nowrap">商品</th>
+                        <th>分类</th>
+                        <th className="text-right whitespace-nowrap">
+                          <span className="text-primary-600">当前库存</span>
+                        </th>
+                        <th className="text-right whitespace-nowrap">流水倒推</th>
+                        <th className="text-right whitespace-nowrap">累计入库</th>
+                        <th className="text-right whitespace-nowrap">累计出库</th>
+                        <th className="text-right whitespace-nowrap">租借占用</th>
+                        <th className="text-right whitespace-nowrap">可租可售</th>
+                        <th className="text-right whitespace-nowrap">差异</th>
+                        <th className="text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockCheckData.items.map((d) => (
+                        <tr
+                          key={d.id}
+                          className={cn(
+                            d.isMismatch && "bg-danger-50/30 hover:bg-danger-50/60",
+                            !d.isMismatch && "hover:bg-background-50"
+                          )}
+                        >
+                          <td>
+                            <div className="font-medium text-text-900 text-sm">{d.name}</div>
+                            <div className="text-[11px] text-text-400 font-mono">{d.sku}</div>
+                          </td>
+                          <td className="text-xs text-text-600">{d.category}</td>
+                          <td className="text-right">
+                            <span className={cn(
+                              "font-bold font-mono",
+                              d.isMismatch ? "text-danger-600" : "text-primary-600"
+                            )}>
+                              {d.currentStock}
+                            </span>
+                            {d.isMismatch && <AlertTriangle className="w-3 h-3 inline ml-1 text-danger-500" />}
+                          </td>
+                          <td className="text-right font-mono text-text-600">{d.calcStock}</td>
+                          <td className="text-right font-mono text-emerald-600">+{d.plusQty}</td>
+                          <td className="text-right font-mono text-danger-600">-{d.minusQty}</td>
+                          <td className="text-right">
+                            {d.occupied > 0 ? (
+                              <span className="badge badge-info !py-0.5">{d.occupied} 件</span>
+                            ) : <span className="text-text-400">0</span>}
+                          </td>
+                          <td className="text-right font-semibold font-mono text-success-600">
+                            {d.availableForRent}
+                          </td>
+                          <td className="text-right">
+                            <span className={cn(
+                              "font-bold font-mono",
+                              d.diff !== 0 ? (d.diff > 0 ? "text-orange-600" : "text-danger-600") : "text-text-400"
+                            )}>
+                              {d.diff > 0 ? "+" : ""}{d.diff}
+                            </span>
+                          </td>
+                          <td className="text-right whitespace-nowrap">
+                            <button
+                              className="text-xs text-primary-600 hover:underline"
+                              onClick={() => {
+                                const s = useAppStore.getState();
+                                s.openProductHistory(d.id, d.name);
+                              }}
+                            >
+                              查看流水
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-xl border border-border-100 p-4">
+                  <div className="text-xs font-semibold text-text-700 mb-2">💡 对账说明</div>
+                  <ul className="text-xs text-text-500 space-y-1.5 list-disc pl-4">
+                    <li><span className="text-primary-600 font-medium">当前库存</span>：商品档案中的实际库存</li>
+                    <li><span className="text-text-600 font-medium">流水倒推</span>：当前库存+累计出库-累计入库</li>
+                    <li><span className="text-danger-600 font-medium">差异 ≠ 0</span>：可能漏记/重复记账</li>
+                  </ul>
+                </div>
+                <div className="rounded-xl border border-border-100 p-4">
+                  <div className="text-xs font-semibold text-text-700 mb-2">🔍 排查建议</div>
+                  <ul className="text-xs text-text-500 space-y-1.5 list-disc pl-4">
+                    <li>点击「查看流水」逐条核对</li>
+                    <li>检查销售/租借的原始订单</li>
+                    <li>确认调拨单据是否全部收发</li>
+                  </ul>
+                </div>
+                <div className="rounded-xl border border-border-100 p-4">
+                  <div className="text-xs font-semibold text-text-700 mb-2">📋 处理流程</div>
+                  <ul className="text-xs text-text-500 space-y-1.5 list-disc pl-4">
+                    <li>确有漏记 → 补单（入库/报损）</li>
+                    <li>原因不明 → 创建盘点任务</li>
+                    <li>盘点确认后系统库存自动校正</li>
+                  </ul>
                 </div>
               </div>
             </div>

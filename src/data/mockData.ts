@@ -207,6 +207,75 @@ export const stockRecords: StockRecord[] = [
   { id: "stk8", type: "transfer", productId: "prod5", productName: "木质1000片拼图", quantity: 8, beforeStock: 0, afterStock: 8, relatedOrderNo: "TR20250602", operator: "店长-李明", remark: "从海淀门店调入", createdAt: dateStr(7) },
 ];
 
+// ============ 历史销售/租借自动补流水（完整台账） ============
+const __historicalRecords: StockRecord[] = [];
+// 1. 销售订单流水
+saleOrders.forEach((o, oi) => {
+  o.items.forEach((it, ki) => {
+    const p = products.find(x => x.id === it.productId);
+    const beforeStock = (p?.stock || 0) + it.quantity; // 估算：倒推销售前库存
+    __historicalRecords.push({
+      id: `stk-s-${oi}-${ki}`,
+      type: o.status === "returned" ? "sale_return" : "sale",
+      productId: it.productId,
+      productName: it.productName,
+      quantity: it.quantity,
+      beforeStock: beforeStock,
+      afterStock: o.status === "returned" ? beforeStock + it.quantity : beforeStock - it.quantity,
+      relatedOrderNo: o.orderNo,
+      operator: o.operator,
+      remark: o.status === "returned" ? "销售退货入库" : `销售出库-${o.orderNo}`,
+      createdAt: o.createdAt,
+    });
+  });
+});
+// 2. 租借订单流水
+rentalOrders.forEach((o, oi) => {
+  const pMap = products.reduce((acc, p) => ((acc[p.id] = p), acc), {} as Record<string, Product>);
+  // 2a. 租出
+  o.items.forEach((it, ki) => {
+    const p = pMap[it.productId];
+    const beforeStock = (p?.stock || 0) + it.quantity;
+    __historicalRecords.push({
+      id: `stk-ro-${oi}-${ki}`,
+      type: "rental_out",
+      productId: it.productId,
+      productName: it.productName,
+      quantity: it.quantity,
+      beforeStock: beforeStock,
+      afterStock: beforeStock - it.quantity,
+      relatedOrderNo: o.orderNo,
+      operator: o.operator,
+      remark: `租借出库-${o.orderNo}`,
+      createdAt: o.createdAt,
+    });
+  });
+  // 2b. 归还（已完成且有 returnDate）
+  if (o.status === "completed" && o.returnDate) {
+    o.items.forEach((it, ki) => {
+      const p = pMap[it.productId];
+      const beforeStock = p?.stock || 0;
+      __historicalRecords.push({
+        id: `stk-ri-${oi}-${ki}`,
+        type: "rental_in",
+        productId: it.productId,
+        productName: it.productName,
+        quantity: it.quantity,
+        beforeStock: beforeStock,
+        afterStock: beforeStock + it.quantity,
+        relatedOrderNo: o.orderNo,
+        operator: o.operator,
+        remark: `租借归还入库-${o.orderNo}${o.penalty ? `含罚金${o.penalty}元` : ""}`,
+        createdAt: o.returnDate,
+      });
+    });
+  }
+});
+// 合并：按 createdAt 倒序
+export const allStockRecords: StockRecord[] = [...__historicalRecords, ...stockRecords].sort(
+  (a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)
+);
+
 export const maintenanceOrders: MaintenanceOrder[] = [
   { id: "mt1", orderNo: "MT20250601001", type: "repair", productId: "prod13", productName: "遥控越野车四驱", description: "遥控距离变短，车轮卡滞", assignee: "店员小张", status: "pending", expectedDate: dateStr(-1).slice(0, 10), customerName: "王先生", customerPhone: "13900139001", operator: "店员小陈", createdAt: dateStr(0) },
   { id: "mt2", orderNo: "MT20250601002", type: "clean", productName: "出租玩具套装-A", description: "深度清洁消毒（租借归还后）", assignee: "店员小王", status: "processing", expectedDate: dateStr(-1).slice(0, 10), operator: "店员小陈", createdAt: dateStr(1) },

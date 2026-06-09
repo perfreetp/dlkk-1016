@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "@/store";
 import {
   ShoppingCart,
@@ -36,6 +36,26 @@ export default function Sales() {
   const updateProduct = useAppStore((s) => s.updateProduct);
   const updateSale = useAppStore((s) => s.updateSale);
   const addStockRecord = useAppStore((s) => s.addStockRecord);
+  const orderFocus = useAppStore((s) => s.orderFocus);
+  const setOrderFocus = useAppStore((s) => s.setOrderFocus);
+
+  const [highlightOrderNo, setHighlightOrderNo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (orderFocus?.page === "sales" && orderFocus.orderNo) {
+      setShowHistory(true);
+      const targetNo = orderFocus.orderNo;
+      setTimeout(() => {
+        const el = document.getElementById(`sale-row-${targetNo}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setHighlightOrderNo(targetNo);
+          setTimeout(() => setHighlightOrderNo(null), 4000);
+          setOrderFocus(null);
+        }
+      }, 300);
+    }
+  }, [orderFocus]);
 
   const [cart, setCart] = useState<{ productId: string; productName: string; price: number; qty: number; discount: number; imageUrl: string }[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -533,7 +553,14 @@ export default function Sales() {
                 </thead>
                 <tbody>
                   {saleOrders.slice(0, 50).map((o) => (
-                    <tr key={o.id}>
+                    <tr
+                      key={o.id}
+                      id={`sale-row-${o.orderNo}`}
+                      className={cn(
+                        highlightOrderNo === o.orderNo &&
+                          "bg-yellow-100/80 ring-2 ring-yellow-400 ring-offset-1 transition-all duration-700"
+                      )}
+                    >
                       <td className="font-mono text-xs">{o.orderNo}</td>
                       <td className="max-w-40 truncate text-xs">{o.items.map((i) => i.productName).join("、")}</td>
                       <td>{o.items.reduce((s, i) => s + i.quantity, 0)}</td>
