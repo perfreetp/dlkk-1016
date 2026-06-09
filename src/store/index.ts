@@ -45,6 +45,13 @@ interface AppState {
   transferOrders: TransferOrder[];
   stocktakeOrders: StocktakeOrder[];
 
+  productHistory: { id: string; name: string } | null;
+  openProductHistory: (id: string, name: string) => void;
+  closeProductHistory: () => void;
+
+  orderFocus: { orderNo: string; page: "inventory" | "sales" | "rental"; tab?: string } | null;
+  setOrderFocus: (focus: { orderNo: string; page: "inventory" | "sales" | "rental"; tab?: string } | null) => void;
+
   addProduct: (p: Product) => void;
   updateProduct: (id: string, p: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
@@ -94,6 +101,13 @@ export const useAppStore = create<AppState>((set) => ({
   tags: initialTags,
   transferOrders: initialTransfers,
   stocktakeOrders: initialStocktakes,
+
+  productHistory: null,
+  openProductHistory: (id, name) => set({ productHistory: { id, name } }),
+  closeProductHistory: () => set({ productHistory: null }),
+
+  orderFocus: null,
+  setOrderFocus: (focus) => set({ orderFocus: focus }),
 
   addProduct: (p) => set((s) => ({ products: [p, ...s.products] })),
   updateProduct: (id, p) =>

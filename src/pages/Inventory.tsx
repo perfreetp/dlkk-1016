@@ -56,6 +56,7 @@ export default function Inventory() {
     updateTransfer,
     addStocktake,
     suppliers,
+    openProductHistory,
   } = useAppStore();
 
   const lowStockProducts = products.filter((p) => p.stock < p.safetyStock);
@@ -79,9 +80,6 @@ export default function Inventory() {
     toStore: "朝阳店",
     items: [],
   });
-
-  // 商品流水明细弹窗
-  const [showProductHistory, setShowProductHistory] = useState<{ id: string; name: string } | null>(null);
 
   // 盘点
   const [showStocktake, setShowStocktake] = useState(false);
@@ -444,7 +442,7 @@ export default function Inventory() {
                     <td><span className={cn("badge", typeConfig[r.type].cls)}>{typeConfig[r.type].label}</span></td>
                     <td
                       className="font-medium text-text-900 cursor-pointer hover:text-primary-600 hover:underline"
-                      onClick={() => setShowProductHistory({ id: r.productId, name: r.productName })}
+                      onClick={() => openProductHistory(r.productId, r.productName)}
                     >{r.productName}</td>
                     <td className="text-emerald-600 font-bold">+{r.quantity}</td>
                     <td>{r.beforeStock}</td>
@@ -508,7 +506,7 @@ export default function Inventory() {
                     <span
                       key={it.productId}
                       className="px-3 py-1.5 bg-background-50 border border-border-100 rounded-lg text-xs text-text-700 cursor-pointer hover:border-primary-300 hover:bg-primary-50"
-                      onClick={() => setShowProductHistory({ id: it.productId, name: it.productName })}
+                      onClick={() => openProductHistory(it.productId, it.productName)}
                       title="点击查看商品流水"
                     >
                       <Package className="w-3 h-3 inline mr-1" />
@@ -598,7 +596,7 @@ export default function Inventory() {
                           <tr key={it.productId}>
                             <td
                               className="font-medium text-text-800 cursor-pointer hover:text-primary-600 hover:underline"
-                              onClick={() => setShowProductHistory({ id: it.productId, name: it.productName })}
+                              onClick={() => openProductHistory(it.productId, it.productName)}
                             >{it.productName}</td>
                             <td className="text-right text-text-600">{it.systemStock}</td>
                             <td className="text-right font-medium text-text-900">{it.actualStock}</td>
@@ -641,7 +639,7 @@ export default function Inventory() {
                     <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
                     <td
                       className="font-medium text-text-900 cursor-pointer hover:text-primary-600 hover:underline"
-                      onClick={() => setShowProductHistory({ id: r.productId, name: r.productName })}
+                      onClick={() => openProductHistory(r.productId, r.productName)}
                     >{r.productName}</td>
                     <td className="text-danger-600 font-bold">-{r.quantity}</td>
                     <td>{r.beforeStock}</td>
@@ -678,15 +676,25 @@ export default function Inventory() {
                   <div className="flex items-center gap-3 mb-3">
                     <img src={p.imageUrl} className="w-14 h-14 rounded-lg object-cover border border-border-100" />
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-text-900 truncate">{p.name}</div>
+                      <button
+                        onClick={() => openProductHistory(p.id, p.name)}
+                        className="font-semibold text-text-900 truncate w-full text-left hover:text-primary-600 hover:underline underline-offset-2 transition-colors"
+                      >
+                        {p.name}
+                      </button>
                       <div className="text-xs text-text-500">{p.categoryName} · {p.ageRange}</div>
                     </div>
                   </div>
                   <div className="flex items-center justify-between mb-2.5">
-                    <div>
+                    <button
+                      onClick={() => openProductHistory(p.id, p.name)}
+                      className="text-left"
+                    >
                       <span className="text-xs text-text-500">当前库存</span>
-                      <div className="text-2xl font-bold text-danger-600">{p.stock}</div>
-                    </div>
+                      <div className="text-2xl font-bold text-danger-600 hover:text-danger-700 transition-colors">
+                        {p.stock}
+                      </div>
+                    </button>
                     <div className="text-right">
                       <span className="text-xs text-text-500">安全库存</span>
                       <div className="text-lg font-semibold text-text-700">{p.safetyStock}</div>
@@ -981,108 +989,6 @@ export default function Inventory() {
               )}
               onClick={submitTransferCreate}
             >创建调拨单（待发货）</button>
-          </ModalFooter>
-        </Modal>
-      )}
-
-      {/* ============ 商品流水明细弹窗 ============ */}
-      {showProductHistory && (
-        <Modal
-          title={`📋 「${showProductHistory.name}」库存流水明细`}
-          onClose={() => setShowProductHistory(null)}
-          size="xl"
-        >
-          <ModalBody>
-            {(() => {
-              const p = products.find((x) => x.id === showProductHistory.id);
-              const records = stockRecords
-                .filter((r) => r.productId === showProductHistory.id)
-                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-              const diffQty = records.length ? records[0].afterStock : p?.stock ?? 0;
-              return (
-                <div className="space-y-4">
-                  {p && (
-                    <div className="p-4 rounded-xl bg-gradient-to-r from-primary-50 to-secondary-50 border border-primary-200 flex items-center gap-4">
-                      <img src={p.imageUrl} className="w-16 h-16 rounded-lg object-cover border border-white" />
-                      <div className="flex-1">
-                        <div className="font-bold text-text-900">{p.name}</div>
-                        <div className="text-xs text-text-500 mt-0.5">{p.categoryName} · {p.ageRange} · 条码 {p.barcode}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-text-500">当前库存</div>
-                        <div className="text-2xl font-bold text-primary-600">{p.stock}</div>
-                        <div className="text-[10px] text-text-400 mt-0.5">安全库存 {p.safetyStock}</div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="rounded-xl border border-border-100 max-h-[52vh] overflow-auto">
-                    <table className="table text-sm">
-                      <thead className="sticky top-0 bg-white shadow-sm z-10">
-                        <tr>
-                          <th>单号</th>
-                          <th>类型</th>
-                          <th>变动</th>
-                          <th className="text-right">变动前</th>
-                          <th className="text-right">变动后</th>
-                          <th>操作人</th>
-                          <th className="w-56">备注</th>
-                          <th className="text-right">时间</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {records.length === 0 && (
-                          <tr><td colSpan={8} className="text-center py-12 text-text-400">该商品暂无库存流水记录</td></tr>
-                        )}
-                        {records.map((r) => {
-                          const cfg = typeConfig[r.type] || typeConfig.inbound;
-                          const CfgIcon = cfg.icon;
-                          const dir = cfg.dir;
-                          const qtyColor = dir === "+" ? "text-emerald-600" : dir === "-" ? "text-danger-600" : "text-secondary-600";
-                          const qtySign = dir === "+" ? "+" : dir === "-" ? "-" : r.type === "transfer" ? (r.remark?.includes("入库") ? "+" : "-") : r.type === "stocktake" ? (r.afterStock > r.beforeStock ? "+" : r.afterStock < r.beforeStock ? "-" : "") : "";
-                          return (
-                            <tr key={r.id} className="hover:bg-background-50">
-                              <td className="font-mono text-xs text-text-700">{r.relatedOrderNo}</td>
-                              <td>
-                                <span className={cn("badge", cfg.cls)}>
-                                  <CfgIcon className="w-3 h-3 inline mr-1" />{cfg.label}
-                                </span>
-                              </td>
-                              <td className={cn("font-bold", qtyColor)}>
-                                {qtySign}{r.quantity}
-                              </td>
-                              <td className="text-right font-mono">{r.beforeStock}</td>
-                              <td className="text-right font-mono">{r.afterStock}</td>
-                              <td>{r.operator}</td>
-                              <td className="text-xs text-text-500 max-w-56 truncate" title={r.remark}>
-                                {r.remark || "—"}
-                              </td>
-                              <td className="text-right text-xs text-text-400">{r.createdAt}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  {records.length > 0 && (
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {Object.entries(typeConfig).map(([k, v]) => {
-                        const cnt = records.filter((r) => r.type === k).length;
-                        if (cnt === 0) return null;
-                        const VIc = v.icon;
-                        return (
-                          <span key={k} className={cn("px-2.5 py-1 rounded-lg", v.cls)}>
-                            <VIc className="w-3 h-3 inline mr-1" />{v.label} {cnt}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </ModalBody>
-          <ModalFooter>
-            <button className="btn-primary" onClick={() => setShowProductHistory(null)}>关闭</button>
           </ModalFooter>
         </Modal>
       )}

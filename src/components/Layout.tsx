@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
+import ProductHistoryModal from "./ProductHistoryModal";
 
 const navItems = [
   { to: "/", label: "首页", icon: LayoutDashboard },
@@ -127,6 +128,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div className="animate-fade-in-up">{children}</div>
         </main>
       </div>
+      <ProductHistoryModal />
     </div>
   );
 }

@@ -198,6 +198,18 @@ export default function Rental() {
 
   const submitRental = () => {
     if (!rentalFormData.memberId || rentalFormData.products.length === 0) return;
+    const lacks: string[] = [];
+    rentalFormData.products.forEach((it) => {
+      const p = products.find((x) => x.id === it.productId);
+      const stock = p?.stock || 0;
+      if (it.qty > stock) {
+        lacks.push(`· ${it.productName}：需 ${it.qty}，库存 ${stock}，缺 ${it.qty - stock}`);
+      }
+    });
+    if (lacks.length > 0) {
+      alert(`⚠️ 以下商品库存不足，无法继续租出：\n\n${lacks.join("\n")}`);
+      return;
+    }
     const member = members.find((m) => m.id === rentalFormData.memberId);
     const totalRentalFee = rentalFormData.products.reduce(
       (s, p) => s + p.rentalPrice * rentalFormData.days * p.qty,
@@ -819,13 +831,21 @@ export default function Rental() {
                     if (!e.target.value) return;
                     const p = products.find((x) => x.id === e.target.value);
                     if (!p) return;
-                    setRentalFormData({
-                      ...rentalFormData,
-                      products: [
-                        ...rentalFormData.products,
-                        { productId: p.id, productName: p.name, rentalPrice: p.rentalPrice, qty: 1 },
-                      ],
-                    });
+                    const exist = rentalFormData.products.find((x) => x.productId === p.id);
+                    const curQty = exist?.qty || 0;
+                    if (curQty >= p.stock) return alert(`商品「${p.name}」已选 ${curQty} 件（达到最大库存 ${p.stock}）`);
+                    if (exist) {
+                      const arr = rentalFormData.products.map((x) => x.productId === p.id ? { ...x, qty: x.qty + 1 } : x);
+                      setRentalFormData({ ...rentalFormData, products: arr });
+                    } else {
+                      setRentalFormData({
+                        ...rentalFormData,
+                        products: [
+                          ...rentalFormData.products,
+                          { productId: p.id, productName: p.name, rentalPrice: p.rentalPrice, qty: 1 },
+                        ],
+                      });
+                    }
                   }}
                 >
                   <option value="">+ 添加商品...</option>
@@ -839,34 +859,41 @@ export default function Rental() {
                 </select>
                 {rentalFormData.products.length > 0 && (
                   <div className="space-y-2">
-                    {rentalFormData.products.map((p, i) => (
-                      <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-background-50 border border-border-100">
-                        <span className="flex-1 text-sm font-medium text-text-900">{p.productName}</span>
-                        <span className="text-xs text-text-500">¥{p.rentalPrice}/天</span>
-                        <input
-                          type="number"
-                          className="input !w-20 !py-1.5 !text-sm"
-                          value={p.qty}
-                          min="1"
-                          onChange={(e) => {
-                            const arr = [...rentalFormData.products];
-                            arr[i].qty = Number(e.target.value);
-                            setRentalFormData({ ...rentalFormData, products: arr });
-                          }}
-                        />
-                        <button
-                          className="w-8 h-8 rounded-lg hover:bg-danger-50 text-text-400 hover:text-danger-600 flex items-center justify-center transition"
-                          onClick={() =>
-                            setRentalFormData({
-                              ...rentalFormData,
-                              products: rentalFormData.products.filter((_, idx) => idx !== i),
-                            })
-                          }
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
+                    {rentalFormData.products.map((p, i) => {
+                      const prod = products.find((x) => x.id === p.productId);
+                      const stock = prod?.stock || 0;
+                      return (
+                        <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-background-50 border border-border-100">
+                          <span className="flex-1 text-sm font-medium text-text-900">{p.productName}</span>
+                          <span className="text-xs text-text-500">¥{p.rentalPrice}/天</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-md bg-primary-50 text-primary-700">可用 {stock}</span>
+                          <input
+                            type="number"
+                            className="input !w-20 !py-1.5 !text-sm"
+                            value={p.qty}
+                            min="1"
+                            max={stock || 1}
+                            onChange={(e) => {
+                              const val = Math.max(1, Math.min(Number(e.target.value) || 1, stock));
+                              const arr = [...rentalFormData.products];
+                              arr[i].qty = val;
+                              setRentalFormData({ ...rentalFormData, products: arr });
+                            }}
+                          />
+                          <button
+                            className="w-8 h-8 rounded-lg hover:bg-danger-50 text-text-400 hover:text-danger-600 flex items-center justify-center transition"
+                            onClick={() =>
+                              setRentalFormData({
+                                ...rentalFormData,
+                                products: rentalFormData.products.filter((_, idx) => idx !== i),
+                              })
+                            }
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

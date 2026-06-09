@@ -63,6 +63,10 @@ export default function Sales() {
 
   const addToCart = (product: typeof products[0]) => {
     const existing = cart.find((c) => c.productId === product.id);
+    const curQty = existing?.qty || 0;
+    const maxCanAdd = product.stock - curQty;
+    if (product.stock <= 0) return alert(`商品「${product.name}」当前库存为 0，无法添加`);
+    if (maxCanAdd <= 0) return alert(`商品「${product.name}」已加 ${curQty} 件到购物车，达到最大库存`);
     if (existing) {
       setCart(cart.map((c) => c.productId === product.id ? { ...c, qty: c.qty + 1 } : c));
     } else {
@@ -81,7 +85,10 @@ export default function Sales() {
   const updateQty = (productId: string, delta: number) => {
     setCart(cart.map((c) => {
       if (c.productId !== productId) return c;
+      const p = products.find((x) => x.id === c.productId);
+      const stock = p?.stock || 0;
       const newQty = c.qty + delta;
+      if (newQty > stock) { alert(`商品「${c.productName}」最多只能 ${stock} 件`); return c; }
       return newQty > 0 ? { ...c, qty: newQty } : c;
     }).filter((c) => c.qty > 0));
   };
@@ -92,6 +99,18 @@ export default function Sales() {
 
   const checkout = () => {
     if (cart.length === 0) return;
+    const lacks: string[] = [];
+    cart.forEach((c) => {
+      const p = products.find((x) => x.id === c.productId);
+      const stock = p?.stock || 0;
+      if (c.qty > stock) {
+        lacks.push(`· ${c.productName}：需 ${c.qty}，库存 ${stock}，缺 ${c.qty - stock}`);
+      }
+    });
+    if (lacks.length > 0) {
+      alert(`⚠️ 以下商品库存不足，无法继续收款：\n\n${lacks.join("\n")}`);
+      return;
+    }
     const pad = (n: number) => n.toString().padStart(2, "0");
     const now = new Date();
     const orderNo = `S${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;

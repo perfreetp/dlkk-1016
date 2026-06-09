@@ -42,8 +42,9 @@ import {
   BadgeDollarSign,
   RefreshCw,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-type ReportTab = "hot" | "turnover" | "profit";
+type ReportTab = "hot" | "turnover" | "profit" | "stock_daily";
 type SettingsTab = "store" | "employee" | "supplier" | "tag";
 
 const COLORS = ["#FF6B35", "#1A73E8", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#06B6D4"];
@@ -68,6 +69,7 @@ export default function Reports() {
     addTag,
     updateTag,
     deleteTag,
+    transferOrders,
   } = useAppStore();
 
   const [reportTab, setReportTab] = useState<ReportTab>("hot");
@@ -179,6 +181,93 @@ export default function Reports() {
   const [formState, setFormState] = useState<any>({});
   const [searchText, setSearchText] = useState("");
 
+  // ============ 库存异动日报 ============
+  const storeList = ["全部门店", "海淀店", "朝阳店", "中关村店", "西城店"];
+
+  const [dailyDate, setDailyDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [dailyStore, setDailyStore] = useState<string>("全部门店");
+  const [dailyCategory, setDailyCategory] = useState<string>("全部");
+
+  const dailyTypeConfig: Record<
+    string,
+    { label: string; dir: "+" | "-" | "±"; cls: string; color: string }
+  > = {
+    inbound: { label: "入库", dir: "+", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", color: "#10B981" },
+    sale: { label: "销售", dir: "-", cls: "bg-orange-50 text-orange-700 border-orange-200", color: "#F97316" },
+    sale_return: { label: "销售退货", dir: "+", cls: "bg-pink-50 text-pink-700 border-pink-200", color: "#EC4899" },
+    rental_out: { label: "租出", dir: "-", cls: "bg-indigo-50 text-indigo-700 border-indigo-200", color: "#6366F1" },
+    rental_in: { label: "归还", dir: "+", cls: "bg-cyan-50 text-cyan-700 border-cyan-200", color: "#06B6D4" },
+    damage: { label: "报损", dir: "-", cls: "bg-red-50 text-red-700 border-red-200", color: "#EF4444" },
+    stocktake: { label: "盘点差异", dir: "±", cls: "bg-purple-50 text-purple-700 border-purple-200", color: "#8B5CF6" },
+    transfer_in: { label: "调拨入库", dir: "+", cls: "bg-blue-50 text-blue-700 border-blue-200", color: "#3B82F6" },
+    transfer_out: { label: "调拨出库", dir: "-", cls: "bg-sky-50 text-sky-700 border-sky-200", color: "#0EA5E9" },
+  };
+
+  const dailySummary = useMemo(() => {
+    const transferMap = new Map(transferOrders.map((t) => [t.orderNo, t]));
+    let list = stockRecords.filter((r) => r.createdAt.slice(0, 10) === dailyDate);
+
+    list = list.filter((r) => {
+      if (dailyCategory === "全部") return true;
+      const p = products.find((x) => x.id === r.productId);
+      return p?.categoryId === dailyCategory || categories.find((c) => c.id === p?.categoryId)?.parentId === dailyCategory;
+    });
+
+    list = list.filter((r) => {
+      if (dailyStore === "全部门店") return true;
+      if (r.type === "transfer") {
+        const t = transferMap.get(r.relatedOrderNo);
+        if (!t) return false;
+        return r.remark?.includes("入库") ? t.toStore === dailyStore : t.fromStore === dailyStore;
+      }
+      return true;
+    });
+
+    const agg: Record<string, { qty: number; amount: number }> = {};
+    const typeList = Object.keys(dailyTypeConfig);
+    typeList.forEach((k) => (agg[k] = { qty: 0, amount: 0 }));
+
+    list.forEach((r) => {
+      const p = products.find((x) => x.id === r.productId);
+      const cost = p?.costPrice || 0;
+      const sale = p?.salePrice || 0;
+      const rental = p?.rentalPrice || 0;
+      let key: string = r.type;
+      if (r.type === "transfer") key = r.remark?.includes("入库") ? "transfer_in" : "transfer_out";
+      const dir = dailyTypeConfig[key]?.dir || "±";
+      const qtySign =
+        dir === "+" ? 1 : dir === "-" ? -1 : r.type === "stocktake" ? (r.afterStock > r.beforeStock ? 1 : -1) : 0;
+      const qtyAbs = r.quantity;
+      let amt = 0;
+      if (r.type === "sale") amt = qtyAbs * sale;
+      else if (r.type === "sale_return") amt = qtyAbs * sale;
+      else if (r.type === "rental_out") amt = qtyAbs * rental * 3;
+      else if (r.type === "rental_in") amt = 0;
+      else amt = qtyAbs * cost;
+
+      if (!agg[key]) agg[key] = { qty: 0, amount: 0 };
+      agg[key].qty += qtySign * qtyAbs;
+      agg[key].amount += amt;
+    });
+
+    const rows = typeList
+      .filter((k) => agg[k].qty !== 0 || agg[k].amount > 0)
+      .map((k) => ({ type: k, ...agg[k], cfg: dailyTypeConfig[k] }));
+
+    const totalIn = typeList.reduce((s, k) => {
+      if (dailyTypeConfig[k].dir === "+" && agg[k].qty > 0) return s + agg[k].qty;
+      return s;
+    }, 0);
+    const totalOut = typeList.reduce((s, k) => {
+      if (dailyTypeConfig[k].dir === "-" && agg[k].qty < 0) return s + Math.abs(agg[k].qty);
+      return s;
+    }, 0);
+    const netQty = totalIn - totalOut;
+    const totalValue = rows.reduce((s, r) => s + r.amount, 0);
+
+    return { rows, totalIn, totalOut, netQty, totalValue, count: list.length };
+  }, [stockRecords, dailyDate, dailyStore, dailyCategory, products, categories, transferOrders]);
+
   const openModal = (type: string, data?: any) => {
     setFormState(data ? { ...data } : {});
     setShowModal({ type, data });
@@ -261,6 +350,7 @@ export default function Reports() {
               { key: "hot", label: "热销分析", icon: TrendingUp },
               { key: "turnover", label: "周转分析", icon: RefreshCw },
               { key: "profit", label: "利润分析", icon: DollarSign },
+              { key: "stock_daily", label: "库存异动日报", icon: Package },
             ].map((t) => (
               <button
                 key={t.key}
@@ -274,7 +364,7 @@ export default function Reports() {
           </div>
           <div className="text-xs text-text-500 flex items-center gap-1">
             <Calendar className="w-3.5 h-3.5" />
-            数据周期：近 6 个月
+            数据周期：{reportTab === "stock_daily" ? `当日 (${dailyDate})` : "近 6 个月"}
           </div>
         </div>
 
@@ -526,6 +616,176 @@ export default function Reports() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* ====== 库存异动日报 ====== */}
+          {reportTab === "stock_daily" && (
+            <div className="space-y-5">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="text-xs font-semibold text-text-700 mb-1 block">统计日期</label>
+                  <input
+                    type="date"
+                    value={dailyDate}
+                    onChange={(e) => setDailyDate(e.target.value)}
+                    className="input !py-1.5 !text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-text-700 mb-1 block">门店</label>
+                  <select
+                    className="select !py-1.5 !text-sm"
+                    value={dailyStore}
+                    onChange={(e) => setDailyStore(e.target.value)}
+                  >
+                    {storeList.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-text-700 mb-1 block">商品分类</label>
+                  <select
+                    className="select !py-1.5 !text-sm"
+                    value={dailyCategory}
+                    onChange={(e) => setDailyCategory(e.target.value)}
+                  >
+                    <option value="全部">全部分类</option>
+                    {categories.filter((c) => !c.parentId).map((c) => (
+                      <optgroup key={c.id} label={c.name}>
+                        <option value={c.id}>{c.name}（全子分类）</option>
+                        {categories.filter((x) => x.parentId === c.id).map((sub) => (
+                          <option key={sub.id} value={sub.id}>　{sub.name}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div className="ml-auto text-xs text-text-500">
+                  当日共 <span className="font-semibold text-text-900">{dailySummary.count}</span> 条异动记录
+                </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-4">
+                {[
+                  { label: "入库总数", val: dailySummary.totalIn, cls: "bg-emerald-500", dir: "+" },
+                  { label: "出库总数", val: dailySummary.totalOut, cls: "bg-orange-500", dir: "-" },
+                  { label: "净变动", val: dailySummary.netQty, cls: dailySummary.netQty >= 0 ? "bg-blue-500" : "bg-red-500", dir: dailySummary.netQty >= 0 ? "+" : "-" },
+                  { label: "涉及金额", val: `¥${dailySummary.totalValue.toLocaleString()}`, cls: "bg-purple-500", dir: "" },
+                ].map((kpi) => (
+                  <div
+                    key={kpi.label}
+                    className={`rounded-xl bg-gradient-to-br ${kpi.cls} to-${kpi.cls.replace("bg-", "")}/80 p-4 text-white`}
+                  >
+                    <div className="text-xs opacity-80 mb-1">{kpi.label}</div>
+                    <div className="text-2xl font-bold">
+                      {kpi.dir === "+" && typeof kpi.val === "number" && kpi.val > 0 ? "+" : kpi.dir === "-" ? "-" : ""}
+                      {typeof kpi.val === "number" ? Math.abs(kpi.val).toLocaleString() : kpi.val}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-border-100 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border-100 bg-background-50 font-semibold text-text-900 text-sm">
+                    各类型异动明细
+                  </div>
+                  <div className="max-h-80 overflow-auto scrollbar-thin">
+                    <table className="table text-sm">
+                      <thead className="sticky top-0 bg-white shadow-sm z-10">
+                        <tr>
+                          <th>异动类型</th>
+                          <th className="text-right">数量</th>
+                          <th className="text-right">金额影响</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dailySummary.rows.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="text-center py-12 text-text-400 text-sm">
+                              当日无符合条件的异动记录
+                            </td>
+                          </tr>
+                        )}
+                        {dailySummary.rows.map((row) => (
+                          <tr key={row.type} className="hover:bg-background-50">
+                            <td>
+                              <span className={cn("badge", row.cfg.cls, "border")}>
+                                {row.cfg.label}
+                              </span>
+                            </td>
+                            <td className={cn(
+                              "text-right font-bold font-mono",
+                              row.qty > 0 ? "text-emerald-600" : row.qty < 0 ? "text-danger-600" : "text-text-600"
+                            )}>
+                              {row.qty > 0 ? "+" : ""}{row.qty.toLocaleString()}
+                            </td>
+                            <td className="text-right font-semibold text-text-800">
+                              ¥{row.amount.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border-100 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border-100 bg-background-50 font-semibold text-text-900 text-sm">
+                    异动分布
+                  </div>
+                  <div className="p-5">
+                    {dailySummary.rows.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <BarChart
+                          data={dailySummary.rows.map((r) => ({
+                            name: r.cfg.label,
+                            数量: Math.abs(r.qty),
+                            fill: r.cfg.color,
+                          }))}
+                          margin={{ left: 10, right: 10, top: 10, bottom: 20 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" vertical={false} />
+                          <XAxis
+                            dataKey="name"
+                            stroke="#6B7280"
+                            fontSize={11}
+                            tickLine={false}
+                            interval={0}
+                            angle={-25}
+                            textAnchor="end"
+                            height={60}
+                          />
+                          <YAxis stroke="#9CA3AF" fontSize={11} tickLine={false} />
+                          <Tooltip
+                            contentStyle={{ borderRadius: 12, border: "none", boxShadow: "0 8px 32px rgba(0,0,0,0.1)" }}
+                            formatter={(val: number) => [val + " 件", "数量"]}
+                          />
+                          <Bar
+                            dataKey="数量"
+                            radius={[6, 6, 0, 0]}
+                            barSize={28}
+                          >
+                            {dailySummary.rows.map((r, idx) => (
+                              <Cell
+                                key={idx}
+                                fill={r.cfg.color}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-72 flex flex-col items-center justify-center text-text-400">
+                        <Package className="w-12 h-12 mb-2 opacity-40" />
+                        <div className="text-sm">暂无数据</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

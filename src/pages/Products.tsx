@@ -34,6 +34,7 @@ export default function Products() {
   const tags = useAppStore((s) => s.tags.filter((t) => t.type === "product"));
   const addProduct = useAppStore((s) => s.addProduct);
   const deleteProduct = useAppStore((s) => s.deleteProduct);
+  const openProductHistory = useAppStore((s) => s.openProductHistory);
 
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -292,7 +293,12 @@ export default function Products() {
                     </div>
                   </div>
                   <div className="p-3">
-                    <div className="text-sm font-semibold text-text-primary line-clamp-1 mb-1">{p.name}</div>
+                    <button
+                      onClick={() => openProductHistory(p.id, p.name)}
+                      className="text-sm font-semibold text-text-primary line-clamp-1 mb-1 w-full text-left hover:text-primary-600 hover:underline underline-offset-2 transition-colors"
+                    >
+                      {p.name}
+                    </button>
                     <div className="flex items-center gap-2 text-xs text-text-tertiary mb-2">
                       <span>{p.categoryName}</span>
                       <span>·</span>
@@ -303,9 +309,20 @@ export default function Products() {
                         <span className="text-lg font-bold text-primary-600">¥{p.salePrice}</span>
                         <div className="text-[10px] text-text-tertiary">租¥{p.rentalPrice}/天</div>
                       </div>
-                      <div className={cn("text-xs font-medium px-2 py-0.5 rounded-md", p.stock <= p.safetyStock ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openProductHistory(p.id, p.name);
+                        }}
+                        className={cn(
+                          "text-xs font-medium px-2 py-0.5 rounded-md transition-all hover:ring-2 hover:ring-offset-1 hover:ring-current",
+                          p.stock <= p.safetyStock
+                            ? "bg-red-100 text-red-700 hover:bg-red-200"
+                            : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                        )}
+                      >
                         库存 {p.stock}
-                      </div>
+                      </button>
                     </div>
                   </div>
                 </div>
